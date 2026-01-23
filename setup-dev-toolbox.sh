@@ -1,0 +1,677 @@
+#!/usr/bin/env bash
+
+#  ▄▄▄▄███▄▄▄▄      ▄████████ ███▄▄▄▄      ▄██████▄   ▄██████▄     ▄████████     ███        ▄████████    ▄████████ ███▄▄▄▄    ▄██████▄     ▄████████
+# ▄██▀▀▀███▀▀▀██▄   ███    ███ ███▀▀▀██▄   ███    ███ ███    ███   ███    ███ ▀█████████▄   ███    ███   ███    ███ ███▀▀▀██▄ ███    ███   ███    ███
+# ███   ███   ███   ███    ███ ███   ███   ███    █▀  ███    ███   ███    █▀     ▀███▀▀██   ███    █▀    ███    █▀  ███   ███ ███    ███   ███    █▀
+# ███   ███   ███   ███    ███ ███   ███  ▄███        ███    ███   ███            ███   ▀  ▄███▄▄▄      ▄███▄▄▄     ███   ███ ███    ███   ███
+# ███   ███   ███ ▀███████████ ███   ███ ▀▀███ ████▄  ███    ███ ▀███████████     ███     ▀▀███▀▀▀     ▀▀███▀▀▀     ███   ███ ███    ███ ▀███████████
+# ███   ███   ███   ███    ███ ███   ███   ███    ███ ███    ███          ███     ███       ███    █▄    ███    █▄  ███   ███ ███    ███          ███
+# ███   ███   ███   ███    ███ ███   ███   ███    ███ ███    ███    ▄█    ███     ███       ███    ███   ███    ███ ███   ███ ███    ███    ▄█    ███
+#  ▀█   ███   █▀    ███    █▀   ▀█   █▀    ████████▀   ▀██████▀   ▄████████▀     ▄████▀     ██████████   ██████████  ▀█   █▀   ▀██████▀   ▄████████▀
+#
+# MangosteenOS Developer Toolbox Setup
+# Handles build, create, and export in one command with enhanced error handling
+
+set -e  # Exit on error
+
+# Configuration
+CONTAINER_NAME="devtoolbox"
+IMAGE_NAME="localhost/devtoolbox"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Logging functions
+log_info() {
+    echo -e "${BLUE}[INFO]${NC} $1"
+}
+
+log_success() {
+    echo -e "${GREEN}[SUCCESS]${NC} $1"
+}
+
+log_warning() {
+    echo -e "${YELLOW}[WARNING]${NC} $1"
+}
+
+log_error() {
+    echo -e "${RED}[ERROR]${NC} $1"
+}
+
+# Show usage
+show_usage() {
+    figlet -f "Delta Corps Priest 1" "MangosteenOS" 2>/dev/null || echo "MangosteenOS - Developer Toolbox Setup"
+    echo
+    echo "Developer Toolbox Setup"
+    echo
+    echo "Usage: $0 [OPTIONS] [IDE1,IDE2,...]"
+    echo
+    echo "Available IDEs:"
+    echo "  zed         - Zed editor"
+    echo "  vscode      - Visual Studio Code"
+    echo "  cursor      - Cursor editor"
+    echo "  jetbrains   - JetBrains Toolbox"
+    echo "  all         - All IDEs (default)"
+    echo
+    echo "Options:"
+    echo "  -h, --help     Show this help message"
+    echo "  -f, --force    Force recreation of existing container"
+    echo "  -n, --no-export Skip application export step"
+    echo "  -v, --verbose  Verbose output"
+    echo "  -d, --debug    Enable debug mode with detailed diagnostics"
+    echo "  -i, --interactive Interactive IDE selection menu"
+    echo
+    echo "Examples:"
+    echo "  $0                        # Interactive menu (if no IDEs specified)"
+    echo "  $0 -i                     # Force interactive menu"
+    echo "  $0 zed                    # Install Zed only"
+    echo "  $0 vscode,cursor          # Install VS Code and Cursor"
+    echo "  $0 jetbrains,zed,cursor   # Install multiple IDEs"
+    echo "  $0 --force all            # Reinstall everything"
+    echo "  $0 --no-export zed        # Build and create only, skip export"
+    echo "  $0 --debug cursor         # Debug mode with diagnostics"
+    echo
+    echo "What this script does:"
+    echo "  1. Builds container with selected IDEs"
+    echo "  2. Creates distrobox container"
+    echo "  3. Exports applications to host system"
+}
+
+# Interactive IDE selection using gum (preferred) or whiptail (fallback)
+interactive_ide_selection() {
+    log_info "Starting developer toolbox setup..."
+    echo
+
+    # Check which tool is available
+    if command -v gum &>/dev/null; then
+        interactive_gum_selection
+    elif command -v whiptail &>/dev/null; then
+        interactive_whiptail_selection
+    elif command -v dialog &>/dev/null; then
+        interactive_dialog_selection
+    else
+        log_error "No interactive menu tool found (gum, whiptail, or dialog)"
+        echo
+        log_error "NOTE: This should NOT happen on MangosteenOS, as the required"
+        log_error "dependencies are included with the OS install. If you are seeing"
+        log_error "this on MangosteenOS, please open an issue."
+        echo
+        log_info "On other systems, please install one of the following:"
+        log_info "  • gum:      brew install gum  (or)  dnf install gum"
+        log_info "  • whiptail: dnf install newt"
+        log_info "  • dialog:   dnf install dialog"
+        echo
+        log_info "Alternatively, specify IDEs directly: $0 zed,cursor"
+        exit 1
+    fi
+}
+
+# Interactive selection using gum
+interactive_gum_selection() {
+    log_info "Using gum for interactive selection"
+    echo
+    echo "Select IDEs to install (Space to select, Enter to confirm):"
+    echo
+
+    local selected_ides=$(gum choose --no-limit \
+        --header="Select one or more IDEs:" \
+        --selected="zed" \
+        "zed" \
+        "vscode" \
+        "cursor" \
+        "jetbrains" \
+        "all")
+
+    if [ -z "$selected_ides" ]; then
+        log_error "No IDEs selected. Exiting."
+        exit 1
+    fi
+
+    # Convert newline-separated output to comma-separated
+    IDES=$(echo "$selected_ides" | tr '\n' ',' | sed 's/,$//')
+
+    log_success "Selected IDEs: $IDES"
+    echo
+}
+
+# Interactive selection using whiptail
+interactive_whiptail_selection() {
+    log_info "Using whiptail for interactive selection"
+    echo
+
+    local selected_ides=$(whiptail --title "IDE Selection" \
+        --checklist "Select IDEs to install (Space to select, Enter to confirm):" 20 60 5 \
+        "zed" "Zed editor" ON \
+        "vscode" "Visual Studio Code" OFF \
+        "cursor" "Cursor editor" OFF \
+        "jetbrains" "JetBrains Toolbox" OFF \
+        "all" "All IDEs" OFF \
+        3>&1 1>&2 2>&3)
+
+    if [ $? -ne 0 ] || [ -z "$selected_ides" ]; then
+        log_error "No IDEs selected. Exiting."
+        exit 1
+    fi
+
+    # Remove quotes and convert spaces to commas
+    IDES=$(echo "$selected_ides" | tr -d '"' | tr ' ' ',')
+
+    log_success "Selected IDEs: $IDES"
+    echo
+}
+
+# Interactive selection using dialog
+interactive_dialog_selection() {
+    log_info "Using dialog for interactive selection"
+    echo
+
+    local selected_ides=$(dialog --stdout --title "IDE Selection" \
+        --checklist "Select IDEs to install (Space to select, Enter to confirm):" 20 60 5 \
+        "zed" "Zed editor" on \
+        "vscode" "Visual Studio Code" off \
+        "cursor" "Cursor editor" off \
+        "jetbrains" "JetBrains Toolbox" off \
+        "all" "All IDEs" off)
+
+    if [ $? -ne 0 ] || [ -z "$selected_ides" ]; then
+        log_error "No IDEs selected. Exiting."
+        exit 1
+    fi
+
+    # Remove quotes and convert spaces to commas
+    IDES=$(echo "$selected_ides" | tr -d '"' | tr ' ' ',')
+
+    log_success "Selected IDEs: $IDES"
+    echo
+}
+
+# Debug function to diagnose export issues
+debug_container_state() {
+    if [ -n "$DEBUG" ]; then
+        echo
+        log_info "=== DEBUG: Container State Diagnostics ==="
+
+        log_info "Container list:"
+        distrobox list || true
+
+        log_info "Container accessibility test:"
+        if distrobox enter "$CONTAINER_NAME" -- echo "Container accessible" 2>/dev/null; then
+            log_success "Container is accessible"
+        else
+            log_error "Cannot access container"
+        fi
+
+        log_info "Available applications in container:"
+        distrobox enter "$CONTAINER_NAME" -- ls -la /usr/bin/ | grep -E "(zed|code|cursor|jetbrains)" || true
+        distrobox enter "$CONTAINER_NAME" -- ls -la /usr/local/bin/ | grep -E "(zed|code|cursor|jetbrains)" || true
+
+        log_info "Desktop entries in container:"
+        distrobox enter "$CONTAINER_NAME" -- ls -la /usr/share/applications/ | grep -E "(zed|code|cursor|jetbrains)" || true
+
+        echo "=== END DEBUG ==="
+        echo
+    fi
+}
+
+# Build container
+build_container() {
+    local ides="$1"
+
+    log_info "Building container with IDEs: $ides"
+
+    if [ -n "$VERBOSE" ]; then
+        podman build . --build-arg IDE="$ides" -t "$IMAGE_NAME"
+    else
+        podman build . --build-arg IDE="$ides" -t "$IMAGE_NAME" --quiet
+    fi
+
+    if [ $? -eq 0 ]; then
+        log_success "Container built successfully"
+    else
+        log_error "Container build failed"
+        exit 1
+    fi
+}
+
+# Create distrobox container
+create_distrobox() {
+    log_info "Creating distrobox container..."
+
+    # Check if container already exists
+    if distrobox list | grep -q "$CONTAINER_NAME"; then
+        if [ -n "$FORCE" ]; then
+            log_warning "Container exists, removing due to --force flag"
+            distrobox rm "$CONTAINER_NAME" --force
+        else
+            log_warning "Container '$CONTAINER_NAME' already exists"
+            echo -n "Do you want to recreate it? (y/N): "
+            read -r response
+            if [[ "$response" =~ ^[Yy]$ ]]; then
+                log_info "Removing existing container"
+                distrobox rm "$CONTAINER_NAME" --force
+            else
+                log_info "Keeping existing container"
+                return 0
+            fi
+        fi
+    fi
+
+    log_info "Creating new distrobox container"
+    if distrobox create -n "$CONTAINER_NAME" -i "$IMAGE_NAME" --volume /home/linuxbrew/.linuxbrew:/home/linuxbrew/.linuxbrew --yes; then
+        log_success "Distrobox container created successfully"
+    else
+        log_error "Failed to create distrobox container"
+        exit 1
+    fi
+}
+
+# Export applications
+export_applications() {
+    local ides="$1"
+
+    if [ -n "$NO_EXPORT" ]; then
+        log_info "Skipping application export (--no-export flag)"
+        return 0
+    fi
+
+    log_info "Exporting applications to host system..."
+
+    # Verify container is running and accessible
+    if ! distrobox list | grep -q "$CONTAINER_NAME"; then
+        log_error "Container '$CONTAINER_NAME' not found"
+        log_info "Available containers:"
+        distrobox list
+        return 1
+    fi
+
+    # Wait a moment for container to be ready
+    log_info "Waiting for container to be ready..."
+    sleep 3
+
+    local export_result=0
+
+    case "$ides" in
+        "all")
+            if ! export_all_available; then
+                log_error "Failed to export all applications"
+                export_result=1
+            fi
+            ;;
+        *)
+            if [[ "$ides" == *","* ]]; then
+                if ! export_multiple_ides "$ides"; then
+                    log_error "Failed to export some applications"
+                    export_result=1
+                fi
+            else
+                if ! export_single_ide "$ides"; then
+                    log_error "Failed to export application: $ides"
+                    export_result=1
+                fi
+            fi
+            ;;
+    esac
+
+    if [ $export_result -eq 0 ]; then
+        log_success "Application export completed successfully"
+    else
+        log_warning "Application export completed with some failures"
+        log_info "Check above for specific error details"
+    fi
+
+    return $export_result
+}
+
+# Export all available IDEs
+export_all_available() {
+    log_info "Detecting and exporting all installed IDEs..."
+
+    local exported_count=0
+    local failed_count=0
+
+    # Check each IDE and export if available
+    if distrobox enter "$CONTAINER_NAME" -- which zed >/dev/null 2>&1; then
+        log_info "Exporting Zed..."
+        if distrobox enter "$CONTAINER_NAME" -- distrobox-export --app zed; then
+            ((exported_count++))
+            log_success "Zed exported successfully"
+        else
+            log_error "Failed to export Zed"
+            ((failed_count++))
+        fi
+    else
+        log_info "Zed not installed, skipping"
+    fi
+
+    if distrobox enter "$CONTAINER_NAME" -- which code >/dev/null 2>&1; then
+        log_info "Exporting VS Code..."
+        if distrobox enter "$CONTAINER_NAME" -- distrobox-export --app code; then
+            ((exported_count++))
+            log_success "VS Code exported successfully"
+        else
+            log_error "Failed to export VS Code"
+            ((failed_count++))
+        fi
+    else
+        log_info "VS Code not installed, skipping"
+    fi
+
+    if distrobox enter "$CONTAINER_NAME" -- which cursor >/dev/null 2>&1; then
+        log_info "Exporting Cursor..."
+        if distrobox enter "$CONTAINER_NAME" -- distrobox-export --app cursor; then
+            ((exported_count++))
+            log_success "Cursor exported successfully"
+        else
+            log_error "Failed to export Cursor"
+            ((failed_count++))
+        fi
+    else
+        log_info "Cursor not installed, skipping"
+    fi
+
+    if distrobox enter "$CONTAINER_NAME" -- which jetbrains-toolbox >/dev/null 2>&1; then
+        log_info "Exporting JetBrains Toolbox..."
+        if distrobox enter "$CONTAINER_NAME" -- distrobox-export --app jetbrains-toolbox; then
+            ((exported_count++))
+            log_success "JetBrains Toolbox exported successfully"
+        else
+            log_error "Failed to export JetBrains Toolbox"
+            ((failed_count++))
+        fi
+    else
+        log_info "JetBrains Toolbox not installed, skipping"
+    fi
+
+    log_success "Exported $exported_count IDE(s)"
+    if [ $failed_count -gt 0 ]; then
+        log_warning "$failed_count export(s) failed"
+        return 1
+    fi
+    return 0
+}
+
+# Export multiple IDEs
+export_multiple_ides() {
+    local ides="$1"
+
+    log_info "Exporting multiple IDEs: $ides"
+
+    IFS=',' read -ra IDE_ARRAY <<< "$ides"
+    local exported_count=0
+    local failed_exports=()
+
+    for ide in "${IDE_ARRAY[@]}"; do
+        ide=$(echo "$ide" | xargs)  # Trim whitespace
+        if [ -n "$ide" ]; then
+            log_info "Attempting to export: $ide"
+            if export_single_ide "$ide"; then
+                ((exported_count++))
+                log_success "Successfully exported: $ide"
+            else
+                log_warning "Failed to export: $ide"
+                failed_exports+=("$ide")
+            fi
+        fi
+    done
+
+    if [ ${#failed_exports[@]} -gt 0 ]; then
+        log_warning "Some exports failed: ${failed_exports[*]}"
+        log_info "Successfully exported: $exported_count IDE(s)"
+
+        # Debug mode: show more details about failures
+        if [ -n "$DEBUG" ]; then
+            log_info "=== DEBUG: Export failure details ==="
+            for failed_ide in "${failed_exports[@]}"; do
+                log_info "Checking failed IDE: $failed_ide"
+                case "${failed_ide,,}" in
+                    "zed")
+                        distrobox enter "$CONTAINER_NAME" -- which zed || log_error "zed command not found"
+                        ;;
+                    "vscode"|"code")
+                        distrobox enter "$CONTAINER_NAME" -- which code || log_error "code command not found"
+                        ;;
+                    "cursor")
+                        distrobox enter "$CONTAINER_NAME" -- which cursor || log_error "cursor command not found"
+                        ;;
+                    "jetbrains"|"toolbox")
+                        distrobox enter "$CONTAINER_NAME" -- which jetbrains-toolbox || log_error "jetbrains-toolbox command not found"
+                        ;;
+                esac
+            done
+            log_info "=== END DEBUG ==="
+        fi
+
+        return 0  # Don't fail the entire installation for export failures
+    else
+        log_success "Exported all $exported_count IDE(s) successfully"
+    fi
+}
+
+# Export single IDE
+export_single_ide() {
+    local ide="$1"
+
+    case "${ide,,}" in
+        "zed")
+            if distrobox enter "$CONTAINER_NAME" -- which zed >/dev/null 2>&1; then
+                log_info "Exporting Zed..."
+                if distrobox enter "$CONTAINER_NAME" -- distrobox-export --app zed; then
+                    return 0
+                else
+                    log_error "Failed to export Zed application"
+                    return 1
+                fi
+            else
+                log_warning "Zed not found in container, skipping export"
+                return 1
+            fi
+            ;;
+        "vscode"|"code")
+            if distrobox enter "$CONTAINER_NAME" -- which code >/dev/null 2>&1; then
+                log_info "Exporting VS Code..."
+                if distrobox enter "$CONTAINER_NAME" -- distrobox-export --app code; then
+                    return 0
+                else
+                    log_error "Failed to export VS Code application"
+                    return 1
+                fi
+            else
+                log_warning "VS Code not found in container, skipping export"
+                return 1
+            fi
+            ;;
+        "cursor")
+            if distrobox enter "$CONTAINER_NAME" -- which cursor >/dev/null 2>&1; then
+                log_info "Exporting Cursor..."
+                if distrobox enter "$CONTAINER_NAME" -- distrobox-export --app cursor; then
+                    return 0
+                else
+                    log_error "Failed to export Cursor application"
+                    return 1
+                fi
+            else
+                log_warning "Cursor not found in container, skipping export"
+                return 1
+            fi
+            ;;
+        "jetbrains"|"toolbox")
+            if distrobox enter "$CONTAINER_NAME" -- which jetbrains-toolbox >/dev/null 2>&1; then
+                log_info "Exporting JetBrains Toolbox..."
+                if distrobox enter "$CONTAINER_NAME" -- distrobox-export --app jetbrains-toolbox; then
+                    return 0
+                else
+                    log_error "Failed to export JetBrains Toolbox application"
+                    return 1
+                fi
+            else
+                log_warning "JetBrains Toolbox not found in container, skipping export"
+                return 1
+            fi
+            ;;
+        *)
+            log_error "Unknown IDE: $ide"
+            return 1
+            ;;
+    esac
+}
+
+# Show completion message
+show_completion() {
+    local ides="$1"
+
+    echo
+    figlet -f "Delta Corps Priest 1" "MangosteenOS" 2>/dev/null || echo "MangosteenOS"
+    echo "════════════════════════════════════════════════════════════════"
+    log_success "IDE Installation Complete!"
+    echo "════════════════════════════════════════════════════════════════"
+    echo
+    echo "📦 Installed IDEs: $ides"
+    echo "🔧 Container: $CONTAINER_NAME"
+    echo "🖼️  Image: $IMAGE_NAME"
+    echo
+    echo "🚀 Your IDEs are now available:"
+    echo "   • From Applications menu (GUI)"
+    echo "   • From command line (terminal)"
+    echo "   • Integrated with your host system"
+    echo
+    echo "💡 Useful commands:"
+    echo "   distrobox enter $CONTAINER_NAME    # Enter container"
+    echo "   distrobox list                     # List containers"
+    echo "   podman images                      # List images"
+    echo
+    echo "🔄 To reinstall or update:"
+    echo "   $0 --force $ides"
+    echo
+}
+
+# Cleanup on exit
+cleanup() {
+    local exit_code=$?
+    if [ $exit_code -ne 0 ]; then
+        echo
+        log_error "Installation failed with exit code: $exit_code"
+        echo
+        echo "💡 Troubleshooting tips:"
+        echo "   • Run with --verbose for more details: $0 --verbose $IDES"
+        echo "   • Check container status: distrobox list"
+        echo "   • Check container logs: podman logs \$(podman ps -a -q --filter ancestor=$IMAGE_NAME)"
+        echo "   • Try --force to recreate everything: $0 --force $IDES"
+        echo "   • For JetBrains issues: ./troubleshoot-jetbrains.sh"
+        echo "   • Manual export: distrobox enter $CONTAINER_NAME -- distrobox-export --app [app_name]"
+    fi
+}
+
+trap cleanup EXIT
+
+# Parse command line arguments
+IDES=""
+FORCE=""
+NO_EXPORT=""
+VERBOSE=""
+DEBUG=""
+INTERACTIVE=""
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -h|--help)
+            show_usage
+            exit 0
+            ;;
+        -f|--force)
+            FORCE="1"
+            shift
+            ;;
+        -n|--no-export)
+            NO_EXPORT="1"
+            shift
+            ;;
+        -v|--verbose)
+            VERBOSE="1"
+            shift
+            ;;
+        -d|--debug)
+            DEBUG="1"
+            VERBOSE="1"  # Debug mode implies verbose
+            shift
+            ;;
+        -i|--interactive)
+            INTERACTIVE="1"
+            shift
+            ;;
+        -*)
+            log_error "Unknown option: $1"
+            echo
+            show_usage
+            exit 1
+            ;;
+        *)
+            IDES="$1"
+            shift
+            ;;
+    esac
+done
+
+# If no IDEs specified and not explicitly non-interactive, use interactive mode
+if [ -z "$IDES" ] || [ -n "$INTERACTIVE" ]; then
+    interactive_ide_selection
+fi
+
+# Default to "all" if still no IDEs specified (shouldn't happen with interactive mode)
+if [ -z "$IDES" ]; then
+    IDES="all"
+fi
+
+# Main execution
+main() {
+    figlet -f "Delta Corps Priest 1" "MangosteenOS" 2>/dev/null || echo "MangosteenOS"
+    echo "═══════════════════════════════════════════════════════════════════"
+    echo "🛠️  IDE Installation Wrapper - Complete Setup in One Command"
+    echo "═══════════════════════════════════════════════════════════════════"
+    echo
+
+    # Change to script directory
+    cd "$SCRIPT_DIR" || {
+        log_error "Could not change to script directory: $SCRIPT_DIR"
+        exit 1
+    }
+
+    # Check if we have the necessary files
+    if [ ! -f "build.sh" ] || [ ! -f "Containerfile" ]; then
+        log_error "Required files not found. Make sure you're in the developer_toolbox directory."
+        exit 1
+    fi
+
+    log_info "Installing IDEs: $IDES"
+    if [ -n "$FORCE" ]; then
+        log_info "Force mode enabled - will recreate existing containers"
+    fi
+    if [ -n "$NO_EXPORT" ]; then
+        log_info "Export disabled - will build and create container only"
+    fi
+    if [ -n "$VERBOSE" ]; then
+        log_info "Verbose mode enabled"
+    fi
+    if [ -n "$DEBUG" ]; then
+        log_info "Debug mode enabled - detailed diagnostics will be shown"
+    fi
+    echo
+
+    # Execute installation steps
+    build_container "$IDES"
+    create_distrobox
+
+    # Debug container state before export
+    debug_container_state
+
+    export_applications "$IDES"
+
+    show_completion "$IDES"
+}
+
+# Run main function
+main
