@@ -10,7 +10,7 @@
 #  ▀█   ███   █▀    ███    █▀   ▀█   █▀    ████████▀   ▀██████▀   ▄████████▀     ▄████▀     ██████████   ██████████  ▀█   █▀   ▀██████▀   ▄████████▀
 #
 # MangosteenOS Developer Toolbox Setup
-# Handles build, create, and export in one command with enhanced error handling
+# Handles build, create, and export in one command
 
 set -e  # Exit on error
 
@@ -630,7 +630,7 @@ fi
 main() {
     figlet -f "Delta Corps Priest 1" "MangosteenOS" 2>/dev/null || echo "MangosteenOS"
     echo "═══════════════════════════════════════════════════════════════════"
-    echo "🛠️  IDE Installation Wrapper - Complete Setup in One Command"
+    echo "Developer Toolbox Setup"
     echo "═══════════════════════════════════════════════════════════════════"
     echo
 
