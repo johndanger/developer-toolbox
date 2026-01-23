@@ -118,7 +118,7 @@ interactive_gum_selection() {
     echo "Select IDEs to install (Space to select, Enter to confirm):"
     echo
 
-    local selected_ides=$(gum choose --no-limit \
+    local selected_ide_guis=$(gum choose --no-limit \
         --header="Select one or more IDEs:" \
         --selected="zed" \
         "zed" \
@@ -127,66 +127,46 @@ interactive_gum_selection() {
         "jetbrains" \
         "all")
 
-    if [ -z "$selected_ides" ]; then
+    local selected_ide_clis=$(gum choose --no-limit \
+        --header="Select one or more CLI IDEs:" \
+        --selected="neovim" \
+        "neovim" \
+        "emacs" \
+        "helix" \
+        "all")
+
+    # Check if at least one category has selections
+    if [ -z "$selected_ide_guis" ] && [ -z "$selected_ide_clis" ]; then
         log_error "No IDEs selected. Exiting."
         exit 1
     fi
 
     # Convert newline-separated output to comma-separated
-    IDES=$(echo "$selected_ides" | tr '\n' ',' | sed 's/,$//')
-
-    log_success "Selected IDEs: $IDES"
-    echo
-}
-
-# Interactive selection using whiptail
-interactive_whiptail_selection() {
-    log_info "Using whiptail for interactive selection"
-    echo
-
-    local selected_ides=$(whiptail --title "IDE Selection" \
-        --checklist "Select IDEs to install (Space to select, Enter to confirm):" 20 60 5 \
-        "zed" "Zed editor" ON \
-        "vscode" "Visual Studio Code" OFF \
-        "cursor" "Cursor editor" OFF \
-        "jetbrains" "JetBrains Toolbox" OFF \
-        "all" "All IDEs" OFF \
-        3>&1 1>&2 2>&3)
-
-    if [ $? -ne 0 ] || [ -z "$selected_ides" ]; then
-        log_error "No IDEs selected. Exiting."
-        exit 1
+    if [ -n "$selected_ide_guis" ]; then
+        GUI_IDES=$(echo "$selected_ide_guis" | tr '\n' ',' | sed 's/,$//')
+        log_success "Selected GUI IDEs: $GUI_IDES"
+    else
+        log_warning "No GUI IDEs selected."
+        GUI_IDES=""
     fi
 
-    # Remove quotes and convert spaces to commas
-    IDES=$(echo "$selected_ides" | tr -d '"' | tr ' ' ',')
-
-    log_success "Selected IDEs: $IDES"
-    echo
-}
-
-# Interactive selection using dialog
-interactive_dialog_selection() {
-    log_info "Using dialog for interactive selection"
-    echo
-
-    local selected_ides=$(dialog --stdout --title "IDE Selection" \
-        --checklist "Select IDEs to install (Space to select, Enter to confirm):" 20 60 5 \
-        "zed" "Zed editor" on \
-        "vscode" "Visual Studio Code" off \
-        "cursor" "Cursor editor" off \
-        "jetbrains" "JetBrains Toolbox" off \
-        "all" "All IDEs" off)
-
-    if [ $? -ne 0 ] || [ -z "$selected_ides" ]; then
-        log_error "No IDEs selected. Exiting."
-        exit 1
+    if [ -n "$selected_ide_clis" ]; then
+        CLI_IDES=$(echo "$selected_ide_clis" | tr '\n' ',' | sed 's/,$//')
+        log_success "Selected CLI IDEs: $CLI_IDES"
+    else
+        log_warning "No CLI IDEs selected."
+        CLI_IDES=""
     fi
 
-    # Remove quotes and convert spaces to commas
-    IDES=$(echo "$selected_ides" | tr -d '"' | tr ' ' ',')
+    # Combine GUI and CLI IDE selections
+    if [ -n "$GUI_IDES" ] && [ -n "$CLI_IDES" ]; then
+        IDES="${GUI_IDES},${CLI_IDES}"
+    elif [ -n "$GUI_IDES" ]; then
+        IDES="$GUI_IDES"
+    elif [ -n "$CLI_IDES" ]; then
+        IDES="$CLI_IDES"
+    fi
 
-    log_success "Selected IDEs: $IDES"
     echo
 }
 
@@ -387,6 +367,46 @@ export_all_available() {
         log_info "JetBrains Toolbox not installed, skipping"
     fi
 
+    # Check and export CLI IDEs
+    if distrobox enter "$CONTAINER_NAME" -- which nvim >/dev/null 2>&1; then
+        log_info "Exporting Neovim..."
+        if distrobox enter "$CONTAINER_NAME" -- distrobox-export --bin /usr/bin/nvim --export-path ~/.local/bin; then
+            ((exported_count++))
+            log_success "Neovim exported successfully"
+        else
+            log_error "Failed to export Neovim"
+            ((failed_count++))
+        fi
+    else
+        log_info "Neovim not installed, skipping"
+    fi
+
+    if distrobox enter "$CONTAINER_NAME" -- which emacs >/dev/null 2>&1; then
+        log_info "Exporting Emacs..."
+        if distrobox enter "$CONTAINER_NAME" -- distrobox-export --bin /usr/bin/emacs --export-path ~/.local/bin; then
+            ((exported_count++))
+            log_success "Emacs exported successfully"
+        else
+            log_error "Failed to export Emacs"
+            ((failed_count++))
+        fi
+    else
+        log_info "Emacs not installed, skipping"
+    fi
+
+    if distrobox enter "$CONTAINER_NAME" -- which helix >/dev/null 2>&1 || distrobox enter "$CONTAINER_NAME" -- which hx >/dev/null 2>&1; then
+        log_info "Exporting Helix..."
+        if distrobox enter "$CONTAINER_NAME" -- distrobox-export --bin /usr/bin/hx --export-path ~/.local/bin; then
+            ((exported_count++))
+            log_success "Helix exported successfully"
+        else
+            log_error "Failed to export Helix"
+            ((failed_count++))
+        fi
+    else
+        log_info "Helix not installed, skipping"
+    fi
+
     log_success "Exported $exported_count IDE(s)"
     if [ $failed_count -gt 0 ]; then
         log_warning "$failed_count export(s) failed"
@@ -440,6 +460,15 @@ export_multiple_ides() {
                         ;;
                     "jetbrains"|"toolbox")
                         distrobox enter "$CONTAINER_NAME" -- which jetbrains-toolbox || log_error "jetbrains-toolbox command not found"
+                        ;;
+                    "neovim"|"nvim")
+                        distrobox enter "$CONTAINER_NAME" -- which nvim || log_error "nvim command not found"
+                        ;;
+                    "emacs")
+                        distrobox enter "$CONTAINER_NAME" -- which emacs || log_error "emacs command not found"
+                        ;;
+                    "helix"|"hx")
+                        distrobox enter "$CONTAINER_NAME" -- which hx || log_error "hx command not found"
                         ;;
                 esac
             done
@@ -510,6 +539,48 @@ export_single_ide() {
                 fi
             else
                 log_warning "JetBrains Toolbox not found in container, skipping export"
+                return 1
+            fi
+            ;;
+        "neovim"|"nvim")
+            if distrobox enter "$CONTAINER_NAME" -- which nvim >/dev/null 2>&1; then
+                log_info "Exporting Neovim..."
+                if distrobox enter "$CONTAINER_NAME" -- distrobox-export --bin /usr/bin/nvim --export-path ~/.local/bin; then
+                    return 0
+                else
+                    log_error "Failed to export Neovim binary"
+                    return 1
+                fi
+            else
+                log_warning "Neovim not found in container, skipping export"
+                return 1
+            fi
+            ;;
+        "emacs")
+            if distrobox enter "$CONTAINER_NAME" -- which emacs >/dev/null 2>&1; then
+                log_info "Exporting Emacs..."
+                if distrobox enter "$CONTAINER_NAME" -- distrobox-export --bin /usr/bin/emacs --export-path ~/.local/bin; then
+                    return 0
+                else
+                    log_error "Failed to export Emacs binary"
+                    return 1
+                fi
+            else
+                log_warning "Emacs not found in container, skipping export"
+                return 1
+            fi
+            ;;
+        "helix"|"hx")
+            if distrobox enter "$CONTAINER_NAME" -- which hx >/dev/null 2>&1; then
+                log_info "Exporting Helix..."
+                if distrobox enter "$CONTAINER_NAME" -- distrobox-export --bin /usr/bin/hx --export-path ~/.local/bin; then
+                    return 0
+                else
+                    log_error "Failed to export Helix binary"
+                    return 1
+                fi
+            else
+                log_warning "Helix not found in container, skipping export"
                 return 1
             fi
             ;;
@@ -641,8 +712,8 @@ main() {
     }
 
     # Check if we have the necessary files
-    if [ ! -f "build.sh" ] || [ ! -f "Containerfile" ]; then
-        log_error "Required files not found. Make sure you're in the developer_toolbox directory."
+    if [ ! -f "scripts/build.sh" ] || [ ! -f "Containerfile" ]; then
+        log_error "Required files not found. Make sure you're in the developer-toolbox directory."
         exit 1
     fi
 

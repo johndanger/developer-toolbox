@@ -178,20 +178,51 @@ EOF
     echo "Command available as: jetbrains-toolbox"
 }
 
+# Function to install CLI IDEs
+install_cli_ide() {
+    local ide="${1,,}"  # Convert to lowercase
+    case "$ide" in
+        "neovim"|"nvim")
+            echo "Installing Neovim..."
+            dnf install -y neovim
+            ;;
+        "emacs")
+            echo "Installing Emacs..."
+            dnf install -y emacs
+            ;;
+        "helix")
+            echo "Installing Helix..."
+            dnf install -y helix
+            ;;
+        *)
+            echo "Error: Unknown CLI IDE '$ide'"
+            echo "Available CLI IDEs: neovim, emacs, helix"
+            return 1
+            ;;
+    esac
+}
+
 # Function to show usage
 show_usage() {
     echo "Usage: $0 [IDE1,IDE2,...]"
-    echo "Available IDEs:"
+    echo "Available GUI IDEs:"
     echo "  zed         - Install Zed editor"
     echo "  vscode      - Install Visual Studio Code"
     echo "  cursor      - Install Cursor editor"
     echo "  jetbrains   - Install JetBrains Toolbox"
+    echo ""
+    echo "Available CLI IDEs:"
+    echo "  neovim      - Install Neovim"
+    echo "  emacs       - Install Emacs"
+    echo "  helix       - Install Helix"
+    echo ""
     echo "  all         - Install all IDEs (default)"
     echo ""
     echo "Examples:"
     echo "  $0 zed                    # Install only Zed"
     echo "  $0 vscode,cursor          # Install VS Code and Cursor"
-    echo "  $0 jetbrains,zed,cursor   # Install JetBrains, Zed, and Cursor"
+    echo "  $0 neovim,helix           # Install Neovim and Helix"
+    echo "  $0 jetbrains,zed,neovim   # Install JetBrains, Zed, and Neovim"
     echo "  $0                        # Install all IDEs"
 }
 
@@ -211,9 +242,19 @@ install_ide() {
         "jetbrains"|"toolbox")
             install_jetbrains
             ;;
+        "neovim"|"nvim")
+            install_cli_ide "neovim"
+            ;;
+        "emacs")
+            install_cli_ide "emacs"
+            ;;
+        "helix")
+            install_cli_ide "helix"
+            ;;
         *)
             echo "Error: Unknown IDE '$ide'"
-            echo "Available IDEs: zed, vscode, cursor, jetbrains"
+            echo "Available GUI IDEs: zed, vscode, cursor, jetbrains"
+            echo "Available CLI IDEs: neovim, emacs, helix"
             return 1
             ;;
     esac
@@ -228,10 +269,18 @@ case "${IDE_TO_INSTALL,,}" in
         ;;
     "all")
         echo "Installing all IDEs..."
+        echo ""
+        echo "=== Installing GUI IDEs ==="
         install_zed
         install_vscode
         install_cursor
         install_jetbrains
+        echo ""
+        echo "=== Installing CLI IDEs ==="
+        install_cli_ide "neovim"
+        install_cli_ide "emacs"
+        install_cli_ide "helix"
+        echo ""
         echo "Installation completed for: all IDEs"
         ;;
     *)
