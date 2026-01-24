@@ -1,14 +1,5 @@
 #!/usr/bin/env bash
 
-#  ▄▄▄▄███▄▄▄▄      ▄████████ ███▄▄▄▄      ▄██████▄   ▄██████▄     ▄████████     ███        ▄████████    ▄████████ ███▄▄▄▄    ▄██████▄     ▄████████
-# ▄██▀▀▀███▀▀▀██▄   ███    ███ ███▀▀▀██▄   ███    ███ ███    ███   ███    ███ ▀█████████▄   ███    ███   ███    ███ ███▀▀▀██▄ ███    ███   ███    ███
-# ███   ███   ███   ███    ███ ███   ███   ███    █▀  ███    ███   ███    █▀     ▀███▀▀██   ███    █▀    ███    █▀  ███   ███ ███    ███   ███    █▀
-# ███   ███   ███   ███    ███ ███   ███  ▄███        ███    ███   ███            ███   ▀  ▄███▄▄▄      ▄███▄▄▄     ███   ███ ███    ███   ███
-# ███   ███   ███ ▀███████████ ███   ███ ▀▀███ ████▄  ███    ███ ▀███████████     ███     ▀▀███▀▀▀     ▀▀███▀▀▀     ███   ███ ███    ███ ▀███████████
-# ███   ███   ███   ███    ███ ███   ███   ███    ███ ███    ███          ███     ███       ███    █▄    ███    █▄  ███   ███ ███    ███          ███
-# ███   ███   ███   ███    ███ ███   ███   ███    ███ ███    ███    ▄█    ███     ███       ███    ███   ███    ███ ███   ███ ███    ███    ▄█    ███
-#  ▀█   ███   █▀    ███    █▀   ▀█   █▀    ████████▀   ▀██████▀   ▄████████▀     ▄████▀     ██████████   ██████████  ▀█   █▀   ▀██████▀   ▄████████▀
-#
 # MangosteenOS Developer Toolbox Setup
 # Handles build, create, and export in one command
 
@@ -45,18 +36,37 @@ log_error() {
 
 # Show usage
 show_usage() {
-    figlet -f "Delta Corps Priest 1" "MangosteenOS" 2>/dev/null || echo "MangosteenOS - Developer Toolbox Setup"
+    figlet -w 999 -f "Soft" "MangosteenOS" 2>/dev/null || echo "MangosteenOS - Developer Toolbox Setup"
     echo
     echo "Developer Toolbox Setup"
     echo
-    echo "Usage: $0 [OPTIONS] [IDE1,IDE2,...]"
+    echo "Usage: $0 [OPTIONS] [IDE1,IDE2,...] [LSP:server1,server2,...]"
     echo
     echo "Available IDEs:"
     echo "  zed         - Zed editor"
     echo "  vscode      - Visual Studio Code"
     echo "  cursor      - Cursor editor"
     echo "  jetbrains   - JetBrains Toolbox"
+    echo "  neovim      - Neovim"
+    echo "  helix       - Helix"
+    echo "  emacs       - Emacs"
     echo "  all         - All IDEs (default)"
+    echo
+    echo "Language Servers (for neovim/helix):"
+    echo "  typescript  - TypeScript/JavaScript"
+    echo "  python      - Python (pyright)"
+    echo "  rust        - Rust (rust-analyzer)"
+    echo "  go          - Go (gopls)"
+    echo "  clang       - C/C++ (clangd)"
+    echo "  lua         - Lua"
+    echo "  bash        - Bash"
+    echo "  html        - HTML"
+    echo "  css         - CSS"
+    echo "  json        - JSON"
+    echo "  yaml        - YAML"
+    echo "  docker      - Dockerfile"
+    echo "  markdown    - Markdown"
+    echo "  all         - All language servers"
     echo
     echo "Options:"
     echo "  -h, --help     Show this help message"
@@ -67,14 +77,16 @@ show_usage() {
     echo "  -i, --interactive Interactive IDE selection menu"
     echo
     echo "Examples:"
-    echo "  $0                        # Interactive menu (if no IDEs specified)"
-    echo "  $0 -i                     # Force interactive menu"
-    echo "  $0 zed                    # Install Zed only"
-    echo "  $0 vscode,cursor          # Install VS Code and Cursor"
-    echo "  $0 jetbrains,zed,cursor   # Install multiple IDEs"
-    echo "  $0 --force all            # Reinstall everything"
-    echo "  $0 --no-export zed        # Build and create only, skip export"
-    echo "  $0 --debug cursor         # Debug mode with diagnostics"
+    echo "  $0                                  # Interactive menu (if no IDEs specified)"
+    echo "  $0 -i                               # Force interactive menu"
+    echo "  $0 zed                              # Install Zed only"
+    echo "  $0 neovim LSP:typescript,python     # Install Neovim with TypeScript and Python LSP"
+    echo "  $0 helix LSP:rust,clang             # Install Helix with Rust and C/C++ LSP"
+    echo "  $0 vscode,cursor                    # Install VS Code and Cursor"
+    echo "  $0 jetbrains,zed,cursor             # Install multiple IDEs"
+    echo "  $0 --force all                      # Reinstall everything"
+    echo "  $0 --no-export zed                  # Build and create only, skip export"
+    echo "  $0 --debug cursor                   # Debug mode with diagnostics"
     echo
     echo "What this script does:"
     echo "  1. Builds container with selected IDEs"
@@ -158,6 +170,37 @@ interactive_gum_selection() {
         CLI_IDES=""
     fi
 
+    # Check if neovim or helix was selected for LSP prompt
+    if echo "$CLI_IDES" | grep -qE "(neovim|helix)"; then
+        echo
+        echo "Language Server Selection for Neovim/Helix:"
+        echo
+        local selected_lsp=$(gum choose --no-limit \
+            --header="Select language servers to install (optional):" \
+            "typescript" \
+            "python" \
+            "rust" \
+            "go" \
+            "clang" \
+            "lua" \
+            "bash" \
+            "html" \
+            "css" \
+            "json" \
+            "yaml" \
+            "docker" \
+            "markdown" \
+            "all")
+
+        if [ -n "$selected_lsp" ]; then
+            LSP_SERVERS=$(echo "$selected_lsp" | tr '\n' ',' | sed 's/,$//')
+            log_success "Selected language servers: $LSP_SERVERS"
+        else
+            log_info "No language servers selected"
+            LSP_SERVERS=""
+        fi
+    fi
+
     # Combine GUI and CLI IDE selections
     if [ -n "$GUI_IDES" ] && [ -n "$CLI_IDES" ]; then
         IDES="${GUI_IDES},${CLI_IDES}"
@@ -201,13 +244,25 @@ debug_container_state() {
 # Build container
 build_container() {
     local ides="$1"
+    local lsp="$2"
 
     log_info "Building container with IDEs: $ides"
+    if [ -n "$lsp" ]; then
+        log_info "Language servers: $lsp"
+    fi
 
     if [ -n "$VERBOSE" ]; then
-        podman build . --build-arg IDE="$ides" -t "$IMAGE_NAME"
+        if [ -n "$lsp" ]; then
+            podman build . --build-arg IDE="$ides" --build-arg LSP="$lsp" -t "$IMAGE_NAME"
+        else
+            podman build . --build-arg IDE="$ides" -t "$IMAGE_NAME"
+        fi
     else
-        podman build . --build-arg IDE="$ides" -t "$IMAGE_NAME" --quiet
+        if [ -n "$lsp" ]; then
+            podman build . --build-arg IDE="$ides" --build-arg LSP="$lsp" -t "$IMAGE_NAME" --quiet
+        else
+            podman build . --build-arg IDE="$ides" -t "$IMAGE_NAME" --quiet
+        fi
     fi
 
     if [ $? -eq 0 ]; then
@@ -596,7 +651,7 @@ show_completion() {
     local ides="$1"
 
     echo
-    figlet -f "Delta Corps Priest 1" "MangosteenOS" 2>/dev/null || echo "MangosteenOS"
+    figlet -w 999 -f "Soft" "MangosteenOS" 2>/dev/null || echo "MangosteenOS"
     echo "════════════════════════════════════════════════════════════════"
     log_success "IDE Installation Complete!"
     echo "════════════════════════════════════════════════════════════════"
@@ -641,6 +696,7 @@ trap cleanup EXIT
 
 # Parse command line arguments
 IDES=""
+LSP_SERVERS=""
 FORCE=""
 NO_EXPORT=""
 VERBOSE=""
@@ -674,6 +730,11 @@ while [[ $# -gt 0 ]]; do
             INTERACTIVE="1"
             shift
             ;;
+        LSP:*|lsp:*)
+            LSP_SERVERS="${1#LSP:}"
+            LSP_SERVERS="${LSP_SERVERS#lsp:}"
+            shift
+            ;;
         -*)
             log_error "Unknown option: $1"
             echo
@@ -699,7 +760,7 @@ fi
 
 # Main execution
 main() {
-    figlet -f "Delta Corps Priest 1" "MangosteenOS" 2>/dev/null || echo "MangosteenOS"
+    figlet -w 999 -f "Soft" "MangosteenOS" 2>/dev/null || echo "MangosteenOS"
     echo "═══════════════════════════════════════════════════════════════════"
     echo "Developer Toolbox Setup"
     echo "═══════════════════════════════════════════════════════════════════"
@@ -718,6 +779,9 @@ main() {
     fi
 
     log_info "Installing IDEs: $IDES"
+    if [ -n "$LSP_SERVERS" ]; then
+        log_info "Language servers: $LSP_SERVERS"
+    fi
     if [ -n "$FORCE" ]; then
         log_info "Force mode enabled - will recreate existing containers"
     fi
@@ -733,7 +797,7 @@ main() {
     echo
 
     # Execute installation steps
-    build_container "$IDES"
+    build_container "$IDES" "$LSP_SERVERS"
     create_distrobox
 
     # Debug container state before export

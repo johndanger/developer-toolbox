@@ -9,11 +9,100 @@ install_common_tools() {
         zsh \
         fish \
         git \
+        nodejs \
         wget \
         gnupg2 \
         dnf-plugins-core \
         kitty-terminfo
 }
+
+install_language_servers() {
+    local servers="$1"
+
+    if [ -z "$servers" ]; then
+        echo "No language servers specified, skipping..."
+        return 0
+    fi
+
+    echo "Installing language servers: $servers"
+
+    # Parse comma-separated list
+    IFS=',' read -ra SERVER_LIST <<< "$servers"
+
+    for server in "${SERVER_LIST[@]}"; do
+        server=$(echo "$server" | xargs)  # Trim whitespace
+        case "${server,,}" in
+            "typescript"|"ts")
+                echo "Installing TypeScript language server..."
+                npm install -g typescript-language-server typescript
+                ;;
+            "html")
+                echo "Installing HTML language server..."
+                npm install -g vscode-langservers-extracted
+                ;;
+            "css")
+                echo "Installing CSS language server..."
+                npm install -g vscode-langservers-extracted
+                ;;
+            "json")
+                echo "Installing JSON language server..."
+                npm install -g vscode-langservers-extracted
+                ;;
+            "bash")
+                echo "Installing Bash language server..."
+                npm install -g bash-language-server
+                ;;
+            "python")
+                echo "Installing Python language server (pyright)..."
+                npm install -g pyright
+                ;;
+            "rust")
+                echo "Installing Rust language server (rust-analyzer)..."
+                dnf install -y rust-analyzer
+                ;;
+            "go")
+                echo "Installing Go language server (gopls)..."
+                dnf install -y golang
+                go install golang.org/x/tools/gopls@latest
+                ;;
+            "clang"|"c"|"cpp")
+                echo "Installing C/C++ language server (clangd)..."
+                dnf install -y clang-tools-extra
+                ;;
+            "lua")
+                echo "Installing Lua language server..."
+                dnf install -y lua-language-server
+                ;;
+            "yaml")
+                echo "Installing YAML language server..."
+                npm install -g yaml-language-server
+                ;;
+            "docker")
+                echo "Installing Dockerfile language server..."
+                npm install -g dockerfile-language-server-nodejs
+                ;;
+            "markdown")
+                echo "Installing Markdown language server (marksman)..."
+                # Download latest marksman release
+                MARKSMAN_VERSION="2023-12-09"
+                curl -L "https://github.com/artempyanykh/marksman/releases/download/${MARKSMAN_VERSION}/marksman-linux-x64" -o /usr/local/bin/marksman
+                chmod +x /usr/local/bin/marksman
+                ;;
+            "all")
+                echo "Installing all common language servers..."
+                npm install -g typescript-language-server typescript vscode-langservers-extracted bash-language-server pyright yaml-language-server dockerfile-language-server-nodejs
+                dnf install -y rust-analyzer clang-tools-extra lua-language-server
+                ;;
+            *)
+                echo "Warning: Unknown language server '$server', skipping..."
+                ;;
+        esac
+    done
+
+    echo "Language server installation complete!"
+}
+
+
 
 # Function to install Zed
 install_zed() {
@@ -181,6 +270,7 @@ EOF
 # Function to install CLI IDEs
 install_cli_ide() {
     local ide="${1,,}"  # Convert to lowercase
+
     case "$ide" in
         "neovim"|"nvim")
             echo "Installing Neovim..."
@@ -202,9 +292,22 @@ install_cli_ide() {
     esac
 }
 
+# Function to check if an IDE is a CLI IDE that uses LSP
+is_cli_lsp_ide() {
+    local ide="${1,,}"
+    case "$ide" in
+        "neovim"|"nvim"|"helix")
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
 # Function to show usage
 show_usage() {
-    echo "Usage: $0 [IDE1,IDE2,...]"
+    echo "Usage: $0 [IDE1,IDE2,...] [LSP_SERVERS]"
     echo "Available GUI IDEs:"
     echo "  zed         - Install Zed editor"
     echo "  vscode      - Install Visual Studio Code"
@@ -218,17 +321,23 @@ show_usage() {
     echo ""
     echo "  all         - Install all IDEs (default)"
     echo ""
+    echo "Language Servers (for neovim/helix):"
+    echo "  Pass as second argument: comma-separated list of servers"
+    echo "  Available: typescript, html, css, json, bash, python, rust, go, clang, lua, yaml, docker, markdown, all"
+    echo ""
     echo "Examples:"
-    echo "  $0 zed                    # Install only Zed"
-    echo "  $0 vscode,cursor          # Install VS Code and Cursor"
-    echo "  $0 neovim,helix           # Install Neovim and Helix"
-    echo "  $0 jetbrains,zed,neovim   # Install JetBrains, Zed, and Neovim"
-    echo "  $0                        # Install all IDEs"
+    echo "  $0 zed                              # Install only Zed"
+    echo "  $0 vscode,cursor                    # Install VS Code and Cursor"
+    echo "  $0 neovim typescript,python         # Install Neovim with TS and Python LSP"
+    echo "  $0 helix rust,clang,lua             # Install Helix with Rust, C/C++, and Lua LSP"
+    echo "  $0 neovim,helix all                 # Install Neovim and Helix with all LSPs"
+    echo "  $0 all                              # Install all IDEs"
 }
 
 # Function to install IDE by name
 install_ide() {
     local ide="${1,,}"  # Convert to lowercase
+
     case "$ide" in
         "zed")
             install_zed
@@ -260,7 +369,11 @@ install_ide() {
     esac
 }
 
+# Parse LSP argument if provided (second argument)
+LSP_SERVERS="${2:-}"
+
 install_common_tools
+
 # Main installation logic
 case "${IDE_TO_INSTALL,,}" in
     "help"|"-h"|"--help")
@@ -281,6 +394,10 @@ case "${IDE_TO_INSTALL,,}" in
         install_cli_ide "emacs"
         install_cli_ide "helix"
         echo ""
+        # Install language servers if specified
+        if [ -n "$LSP_SERVERS" ]; then
+            install_language_servers "$LSP_SERVERS"
+        fi
         echo "Installation completed for: all IDEs"
         ;;
     *)
@@ -289,6 +406,7 @@ case "${IDE_TO_INSTALL,,}" in
             echo "Installing multiple IDEs: ${IDE_TO_INSTALL}"
             IFS=',' read -ra IDES <<< "$IDE_TO_INSTALL"
             installed_ides=()
+            WILL_INSTALL_CLI_IDE=false
             for ide in "${IDES[@]}"; do
                 # Trim whitespace
                 ide=$(echo "$ide" | xargs)
@@ -297,6 +415,9 @@ case "${IDE_TO_INSTALL,,}" in
                     echo "Installing: $ide"
                     if install_ide "$ide"; then
                         installed_ides+=("$ide")
+                        if is_cli_lsp_ide "$ide"; then
+                            WILL_INSTALL_CLI_IDE=true
+                        fi
                     else
                         echo "Failed to install: $ide"
                         exit 1
@@ -304,11 +425,19 @@ case "${IDE_TO_INSTALL,,}" in
                 fi
             done
             echo ""
+            # Install language servers if specified and CLI IDE was installed
+            if [ "$WILL_INSTALL_CLI_IDE" = true ] && [ -n "$LSP_SERVERS" ]; then
+                install_language_servers "$LSP_SERVERS"
+            fi
             echo "Installation completed for: ${installed_ides[*]}"
         else
             # Handle single IDE
             echo "Installing single IDE: ${IDE_TO_INSTALL}"
             if install_ide "$IDE_TO_INSTALL"; then
+                # Install language servers if specified and CLI IDE was installed
+                if is_cli_lsp_ide "$IDE_TO_INSTALL" && [ -n "$LSP_SERVERS" ]; then
+                    install_language_servers "$LSP_SERVERS"
+                fi
                 echo "Installation completed for: ${IDE_TO_INSTALL}"
             else
                 echo ""
