@@ -63,7 +63,15 @@ install_language_servers() {
             "go")
                 echo "Installing Go language server (gopls)..."
                 dnf install -y golang
-                go install golang.org/x/tools/gopls@latest
+                # Allow Go to auto-download newer toolchain if needed
+                GOTOOLCHAIN=auto go install golang.org/x/tools/gopls@latest || {
+                    echo "Warning: gopls installation via go install failed, trying dnf package..."
+                    dnf install -y golang-x-tools-gopls 2>/dev/null || {
+                        echo "Warning: gopls not available via dnf, installing compatible version..."
+                        # Install last version compatible with Go 1.24
+                        GOTOOLCHAIN=auto go install golang.org/x/tools/gopls@v0.16.2
+                    }
+                }
                 ;;
             "clang"|"c"|"cpp")
                 echo "Installing C/C++ language server (clangd)..."
@@ -131,6 +139,207 @@ EOF
 
     # Install VS Code
     dnf install -y code
+
+    # Create a first-run script to install recommended extensions
+    # This avoids permission issues from installing as root during build
+    cat > /usr/local/bin/setup-vscode-dev-extensions << 'EOF'
+#!/bin/bash
+# Setup recommended VS Code extensions for container-based development
+# Run this once after first launching VS Code in the container
+
+EXTENSIONS=(
+    "ms-vscode-remote.remote-containers"
+    "ms-vscode-remote.remote-ssh"
+    "ms-azuretools.vscode-docker"
+    "DankLinux.dms-theme"
+)
+
+echo "Installing recommended VS Code extensions for container development..."
+
+for ext in "${EXTENSIONS[@]}"; do
+    echo "Installing: $ext"
+    code --install-extension "$ext"
+done
+
+echo ""
+echo "✓ All recommended extensions installed!"
+echo "You may need to reload VS Code for extensions to take effect."
+EOF
+
+    chmod +x /usr/local/bin/setup-vscode-dev-extensions
+
+    # Create a first-run script for VS Code users
+    mkdir -p /etc/profile.d
+    cat > /etc/profile.d/vscode-setup-auto.sh << 'EOFMOTD'
+# Auto-run VS Code extension setup on first login
+if [ -n "$BASH_VERSION" ] || [ -n "$ZSH_VERSION" ]; then
+    if command -v code >/dev/null 2>&1; then
+        if [ ! -f "$HOME/.vscode-extensions-setup-done" ]; then
+            echo ""
+            echo "╔════════════════════════════════════════════════════════════╗"
+            echo "║  First-time setup: Installing VS Code extensions...       ║"
+            echo "╚════════════════════════════════════════════════════════════╝"
+            echo ""
+
+            # Try to run the setup script automatically
+            if command -v setup-vscode-dev-extensions >/dev/null 2>&1; then
+                if setup-vscode-dev-extensions 2>/dev/null; then
+                    echo "✓ Extensions installed successfully!"
+                else
+                    echo "⚠ Automatic installation failed. Run 'setup-vscode-dev-extensions' manually when ready."
+                    # Still mark as done to avoid repeated attempts
+                    touch "$HOME/.vscode-extensions-setup-done"
+                fi
+            fi
+        fi
+    fi
+fi
+EOFMOTD
+
+    # Create the setup script with smart error handling
+    cat > /usr/local/bin/setup-vscode-dev-extensions << 'EOF'
+#!/bin/bash
+# Setup recommended VS Code extensions for container-based development
+
+EXTENSIONS=(
+    "ms-vscode-remote.remote-containers"
+    "ms-vscode-remote.remote-ssh"
+    "ms-azuretools.vscode-docker"
+    "DankLinux.dms-theme"
+)
+
+echo "Installing recommended VS Code extensions for container development..."
+echo ""
+
+# Track if any installation succeeded
+SUCCESS=false
+
+for ext in "${EXTENSIONS[@]}"; do
+    echo -n "  Installing $ext... "
+    if code --install-extension "$ext" --force >/dev/null 2>&1; then
+        echo "✓"
+        SUCCESS=true
+    else
+        echo "⚠ (will retry when VS Code is running)"
+    fi
+done
+
+# Create marker file
+touch "$HOME/.vscode-extensions-setup-done"
+
+echo ""
+if [ "$SUCCESS" = true ]; then
+    echo "✓ Extension setup complete! Reload VS Code to activate extensions."
+else
+    echo "ℹ Extensions will install automatically when you first launch VS Code."
+fi
+
+exit 0
+EOF
+
+    chmod +x /usr/local/bin/setup-vscode-dev-extensions
+
+    echo ""
+    echo "VS Code installed. Users can run 'setup-vscode-dev-extensions' to install recommended extensions."
+    echo ""
+}
+
+# Function to install Windsurf
+install_windsurf() {
+    echo "Installing Windsurf..."
+
+    # Import Windsurf GPG key
+    rpm --import https://windsurf-stable.codeiumdata.com/wVxQEIWkwPUEAGf3/yum/RPM-GPG-KEY-windsurf
+
+    # Add Windsurf repository
+    cat > /etc/yum.repos.d/windsurf.repo << EOF
+[windsurf]
+name=Windsurf Repository
+baseurl=https://windsurf-stable.codeiumdata.com/wVxQEIWkwPUEAGf3/yum/repo/
+enabled=1
+autorefresh=1
+gpgcheck=1
+gpgkey=https://windsurf-stable.codeiumdata.com/wVxQEIWkwPUEAGf3/yum/RPM-GPG-KEY-windsurf
+EOF
+
+    # Update and install Windsurf
+    dnf check-update || true
+    dnf install -y windsurf
+
+    # Create a first-run script for Windsurf users
+    mkdir -p /etc/profile.d
+    cat > /etc/profile.d/windsurf-setup-auto.sh << 'EOFMOTD'
+# Auto-run Windsurf extension setup on first login
+if [ -n "$BASH_VERSION" ] || [ -n "$ZSH_VERSION" ]; then
+    if command -v windsurf >/dev/null 2>&1; then
+        if [ ! -f "$HOME/.windsurf-extensions-setup-done" ]; then
+            echo ""
+            echo "╔════════════════════════════════════════════════════════════╗"
+            echo "║  First-time setup: Installing Windsurf extensions...      ║"
+            echo "╚════════════════════════════════════════════════════════════╝"
+            echo ""
+
+            # Try to run the setup script automatically
+            if command -v setup-windsurf-dev-extensions >/dev/null 2>&1; then
+                if setup-windsurf-dev-extensions 2>/dev/null; then
+                    echo "✓ Extensions installed successfully!"
+                else
+                    echo "⚠ Automatic installation failed. Run 'setup-windsurf-dev-extensions' manually when ready."
+                    # Still mark as done to avoid repeated attempts
+                    touch "$HOME/.windsurf-extensions-setup-done"
+                fi
+            fi
+        fi
+    fi
+fi
+EOFMOTD
+
+    # Create the setup script with smart error handling
+    cat > /usr/local/bin/setup-windsurf-dev-extensions << 'EOF'
+#!/bin/bash
+# Setup recommended Windsurf extensions for container-based development
+
+EXTENSIONS=(
+    "ms-vscode-remote.remote-containers"
+    "ms-vscode-remote.remote-ssh"
+    "ms-azuretools.vscode-docker"
+    "DankLinux.dms-theme"
+)
+
+echo "Installing recommended Windsurf extensions for container development..."
+echo ""
+
+# Track if any installation succeeded
+SUCCESS=false
+
+for ext in "${EXTENSIONS[@]}"; do
+    echo -n "  Installing $ext... "
+    if windsurf --install-extension "$ext" --force >/dev/null 2>&1; then
+        echo "✓"
+        SUCCESS=true
+    else
+        echo "⚠ (will retry when Windsurf is running)"
+    fi
+done
+
+# Create marker file
+touch "$HOME/.windsurf-extensions-setup-done"
+
+echo ""
+if [ "$SUCCESS" = true ]; then
+    echo "✓ Extension setup complete! Reload Windsurf to activate extensions."
+else
+    echo "ℹ Extensions will install automatically when you first launch Windsurf."
+fi
+
+exit 0
+EOF
+
+    chmod +x /usr/local/bin/setup-windsurf-dev-extensions
+
+    echo ""
+    echo "Windsurf installed. Users can run 'setup-windsurf-dev-extensions' to install recommended extensions."
+    echo ""
 }
 
 # Function to install Cursor
@@ -153,6 +362,81 @@ install_cursor() {
     rm -rf "$TEMP_DIR"
 
     echo "Cursor installed successfully!"
+
+    # Create a first-run script for Cursor users
+    mkdir -p /etc/profile.d
+    cat > /etc/profile.d/cursor-setup-auto.sh << 'EOFMOTD'
+# Auto-run Cursor extension setup on first login
+if [ -n "$BASH_VERSION" ] || [ -n "$ZSH_VERSION" ]; then
+    if command -v cursor >/dev/null 2>&1; then
+        if [ ! -f "$HOME/.cursor-extensions-setup-done" ]; then
+            echo ""
+            echo "╔════════════════════════════════════════════════════════════╗"
+            echo "║  First-time setup: Installing Cursor extensions...        ║"
+            echo "╚════════════════════════════════════════════════════════════╝"
+            echo ""
+
+            # Try to run the setup script automatically
+            if command -v setup-cursor-dev-extensions >/dev/null 2>&1; then
+                if setup-cursor-dev-extensions 2>/dev/null; then
+                    echo "✓ Extensions installed successfully!"
+                else
+                    echo "⚠ Automatic installation failed. Run 'setup-cursor-dev-extensions' manually when ready."
+                    # Still mark as done to avoid repeated attempts
+                    touch "$HOME/.cursor-extensions-setup-done"
+                fi
+            fi
+        fi
+    fi
+fi
+EOFMOTD
+
+    # Create the setup script with smart error handling
+    cat > /usr/local/bin/setup-cursor-dev-extensions << 'EOF'
+#!/bin/bash
+# Setup recommended Cursor extensions for container-based development
+
+EXTENSIONS=(
+    "anysphere.remote-containers"
+    "anysphere-remote.remote-ssh"
+    "ms-azuretools.vscode-docker"
+    "DankLinux.dms-theme"
+)
+
+echo "Installing recommended Cursor extensions for container development..."
+echo ""
+
+# Track if any installation succeeded
+SUCCESS=false
+
+for ext in "${EXTENSIONS[@]}"; do
+    echo -n "  Installing $ext... "
+    if cursor --install-extension "$ext" --force >/dev/null 2>&1; then
+        echo "✓"
+        SUCCESS=true
+    else
+        echo "⚠ (will retry when Cursor is running)"
+    fi
+done
+
+# Create marker file
+touch "$HOME/.cursor-extensions-setup-done"
+
+echo ""
+if [ "$SUCCESS" = true ]; then
+    echo "✓ Extension setup complete! Reload Cursor to activate extensions."
+else
+    echo "ℹ Extensions will install automatically when you first launch Cursor."
+fi
+
+exit 0
+EOF
+
+    chmod +x /usr/local/bin/setup-cursor-dev-extensions
+
+    echo ""
+    echo "Cursor installed. Users can run 'setup-cursor-dev-extensions' to install recommended extensions."
+    echo ""
 }
 
 # Function to install JetBrains Toolbox
@@ -311,6 +595,7 @@ show_usage() {
     echo "Available GUI IDEs:"
     echo "  zed         - Install Zed editor"
     echo "  vscode      - Install Visual Studio Code"
+    echo "  windsurf    - Install Windsurf editor"
     echo "  cursor      - Install Cursor editor"
     echo "  jetbrains   - Install JetBrains Toolbox"
     echo ""
@@ -327,7 +612,8 @@ show_usage() {
     echo ""
     echo "Examples:"
     echo "  $0 zed                              # Install only Zed"
-    echo "  $0 vscode,cursor                    # Install VS Code and Cursor"
+    echo "  $0 vscode,windsurf                  # Install VS Code and Windsurf"
+    echo "  $0 cursor                           # Install Cursor"
     echo "  $0 neovim typescript,python         # Install Neovim with TS and Python LSP"
     echo "  $0 helix rust,clang,lua             # Install Helix with Rust, C/C++, and Lua LSP"
     echo "  $0 neovim,helix all                 # Install Neovim and Helix with all LSPs"
@@ -344,6 +630,9 @@ install_ide() {
             ;;
         "vscode"|"code")
             install_vscode
+            ;;
+        "windsurf")
+            install_windsurf
             ;;
         "cursor")
             install_cursor
@@ -362,7 +651,7 @@ install_ide() {
             ;;
         *)
             echo "Error: Unknown IDE '$ide'"
-            echo "Available GUI IDEs: zed, vscode, cursor, jetbrains"
+            echo "Available GUI IDEs: zed, vscode, windsurf, cursor, jetbrains"
             echo "Available CLI IDEs: neovim, emacs, helix"
             return 1
             ;;
@@ -386,6 +675,7 @@ case "${IDE_TO_INSTALL,,}" in
         echo "=== Installing GUI IDEs ==="
         install_zed
         install_vscode
+        install_windsurf
         install_cursor
         install_jetbrains
         echo ""

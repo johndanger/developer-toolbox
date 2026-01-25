@@ -45,6 +45,7 @@ show_usage() {
     echo "Available IDEs:"
     echo "  zed         - Zed editor"
     echo "  vscode      - Visual Studio Code"
+    echo "  windsurf    - Windsurf editor"
     echo "  cursor      - Cursor editor"
     echo "  jetbrains   - JetBrains Toolbox"
     echo "  neovim      - Neovim"
@@ -135,6 +136,7 @@ interactive_gum_selection() {
         --selected="zed" \
         "zed" \
         "vscode" \
+        "windsurf" \
         "cursor" \
         "jetbrains" \
         "all")
@@ -409,6 +411,19 @@ export_all_available() {
         log_info "Cursor not installed, skipping"
     fi
 
+    if distrobox enter "$CONTAINER_NAME" -- which windsurf >/dev/null 2>&1; then
+        log_info "Exporting Windsurf..."
+        if distrobox enter "$CONTAINER_NAME" -- distrobox-export --app windsurf; then
+            ((exported_count++))
+            log_success "Windsurf exported successfully"
+        else
+            log_error "Failed to export Windsurf"
+            ((failed_count++))
+        fi
+    else
+        log_info "Windsurf not installed, skipping"
+    fi
+
     if distrobox enter "$CONTAINER_NAME" -- which jetbrains-toolbox >/dev/null 2>&1; then
         log_info "Exporting JetBrains Toolbox..."
         if distrobox enter "$CONTAINER_NAME" -- distrobox-export --app jetbrains-toolbox; then
@@ -513,6 +528,9 @@ export_multiple_ides() {
                     "cursor")
                         distrobox enter "$CONTAINER_NAME" -- which cursor || log_error "cursor command not found"
                         ;;
+                    "windsurf")
+                        distrobox enter "$CONTAINER_NAME" -- which windsurf || log_error "windsurf command not found"
+                        ;;
                     "jetbrains"|"toolbox")
                         distrobox enter "$CONTAINER_NAME" -- which jetbrains-toolbox || log_error "jetbrains-toolbox command not found"
                         ;;
@@ -583,6 +601,20 @@ export_single_ide() {
                 return 1
             fi
             ;;
+        "windsurf")
+            if distrobox enter "$CONTAINER_NAME" -- which windsurf >/dev/null 2>&1; then
+                log_info "Exporting Windsurf..."
+                if distrobox enter "$CONTAINER_NAME" -- distrobox-export --app windsurf; then
+                    return 0
+                else
+                    log_error "Failed to export Windsurf application"
+                    return 1
+                fi
+            else
+                log_warning "Windsurf not found in container, skipping export"
+                return 1
+            fi
+        ;;
         "jetbrains"|"toolbox")
             if distrobox enter "$CONTAINER_NAME" -- which jetbrains-toolbox >/dev/null 2>&1; then
                 log_info "Exporting JetBrains Toolbox..."

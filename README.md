@@ -178,11 +178,19 @@ podman build . --build-arg IDE=vscode,jetbrains -t localhost/devtoolbox
 - **Source**: Microsoft official repository
 - **Command**: `code`
 - **Features**: Full-featured IDE with extensive extension ecosystem
+- **First-run setup**: Extensions auto-install on first login, or run `setup-vscode-dev-extensions` manually
+
+### Windsurf
+- **Source**: Official Windsurf repository (Codeium)
+- **Command**: `windsurf`
+- **Features**: AI-powered collaborative editor
+- **First-run setup**: Extensions auto-install on first login, or run `setup-windsurf-dev-extensions` manually
 
 ### Cursor
 - **Source**: Official Cursor repository (downloads.cursor.com)
 - **Command**: `cursor`
 - **Features**: AI-powered code editor with advanced completion
+- **First-run setup**: Extensions auto-install on first login, or run `setup-cursor-dev-extensions` manually
 - **Note**: Uses official repository, not third-party COPR packages
 
 ### JetBrains Toolbox
@@ -217,6 +225,46 @@ The build system uses a multi-stage approach:
 1. **Context Stage**: Copies build scripts into container
 2. **Build Stage**: Runs installation based on IDE parameter
 3. **Final Image**: Clean Fedora 42 with selected development tools
+
+## Post-Installation Setup
+
+### IDE Extensions (VS Code, Windsurf, Cursor)
+
+Extensions are **automatically installed on first login** for container-based development. You'll see a message like:
+
+```
+╔════════════════════════════════════════════════════════════╗
+║  First-time setup: Installing VS Code extensions...       ║
+╚════════════════════════════════════════════════════════════╝
+```
+
+If automatic installation fails, you can run the setup manually:
+
+**VS Code:**
+```bash
+setup-vscode-dev-extensions
+```
+
+**Windsurf:**
+```bash
+setup-windsurf-dev-extensions
+```
+
+**Cursor:**
+```bash
+setup-cursor-dev-extensions
+```
+
+#### Installed Extensions:
+- Remote - Containers (`ms-vscode-remote.remote-containers`)
+- Remote - SSH (`ms-vscode-remote.remote-ssh`)
+- Docker (`ms-azuretools.vscode-docker`)
+- DMS Theme (`DankLinux.dms-theme`)
+
+You can also install additional extensions manually using:
+- VS Code: `code --install-extension <extension-id>`
+- Windsurf: `windsurf --install-extension <extension-id>`
+- Cursor: `cursor --install-extension <extension-id>`
 
 ## Troubleshooting
 
