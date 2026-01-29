@@ -173,25 +173,25 @@ podman build . --build-arg IDE=vscode,jetbrains -t localhost/devtoolbox
 - **Source**: Terra repository (Fyra Labs)
 - **Command**: `zed`
 - **Features**: Fast, modern editor with built-in collaboration
+- **Note**: Zed uses its own extension system (not VS Code extensions)
 
 ### VS Code
 - **Source**: Microsoft official repository
 - **Command**: `code`
 - **Features**: Full-featured IDE with extensive extension ecosystem
-- **First-run setup**: Extensions auto-install on first login, or run `setup-vscode-dev-extensions` manually
 
 ### Windsurf
 - **Source**: Official Windsurf repository (Codeium)
 - **Command**: `windsurf`
 - **Features**: AI-powered collaborative editor
-- **First-run setup**: Extensions auto-install on first login, or run `setup-windsurf-dev-extensions` manually
 
 ### Cursor
 - **Source**: Official Cursor repository (downloads.cursor.com)
 - **Command**: `cursor`
 - **Features**: AI-powered code editor with advanced completion
-- **First-run setup**: Extensions auto-install on first login, or run `setup-cursor-dev-extensions` manually
 - **Note**: Uses official repository, not third-party COPR packages
+
+**Extension Auto-Setup**: All VS Code-based editors (VS Code, Windsurf, Cursor) automatically have their extensions checked and installed on first login. See [Post-Installation Setup](#post-installation-setup) below.
 
 ### JetBrains Toolbox
 - **Source**: Official JetBrains download (jetbrains.com)
@@ -230,30 +230,84 @@ The build system uses a multi-stage approach:
 
 ### IDE Extensions (VS Code, Windsurf, Cursor)
 
-Extensions are **automatically installed on first login** for container-based development. You'll see a message like:
+**Note**: This only applies to VS Code-based editors. Other IDEs (Zed, JetBrains, CLI editors) use different extension systems and are not affected by this auto-setup.
 
-```
-╔════════════════════════════════════════════════════════════╗
-║  First-time setup: Installing VS Code extensions...       ║
-╚════════════════════════════════════════════════════════════╝
-```
+Extensions are **automatically checked and installed** when you first launch VS Code, Windsurf, or Cursor. The system:
+- Launches the IDE immediately (no delay waiting for extensions)
+- Waits 5 seconds for the IDE to fully start
+- Checks and installs missing extensions in the background
+- Auto-detects which IDE you're using
+- Runs silently if all extensions are present
 
-If automatic installation fails, you can run the setup manually:
+**Important**: The auto-setup runs when you **launch the IDE** (run `code`, `cursor`, or `windsurf` commands), not when opening regular terminals. Extensions install a few seconds after the IDE opens, so you may need to reload the IDE window once to activate them.
 
-**VS Code:**
+#### Disabling Auto-Installation
+
+If you prefer to manage extensions manually, you can disable automatic installation by setting an environment variable.
+
+**Option 1: Set on Host (Recommended)**
+
+With distrobox, environment variables set on your host system are passed through to the container:
+
 ```bash
-setup-vscode-dev-extensions
+# On your host system - Disable permanently
+echo 'export DISABLE_IDE_AUTO_EXTENSIONS=1' >> ~/.bashrc
+source ~/.bashrc
+
+# Now enter container and launch IDE
+distrobox enter dev-toolbox
+code myproject/  # No automatic extension installation
 ```
 
-**Windsurf:**
+**Option 2: Set Inside Container**
+
+Alternatively, set it inside the container:
+
 ```bash
-setup-windsurf-dev-extensions
+# Inside container - Disable for current session
+export DISABLE_IDE_AUTO_EXTENSIONS=1
+
+# Inside container - Disable permanently
+echo 'export DISABLE_IDE_AUTO_EXTENSIONS=1' >> ~/.bashrc
+source ~/.bashrc
+
+# Launch IDE (no automatic extension installation)
+code myproject/
 ```
 
-**Cursor:**
+**To re-enable automatic installation:**
 ```bash
-setup-cursor-dev-extensions
+# Remove from your ~/.bashrc (host or container)
+# Or temporarily override:
+unset DISABLE_IDE_AUTO_EXTENSIONS
 ```
+
+**Note:** Setting on the host is recommended because it persists across container recreations and applies to all containers automatically.
+
+**Check if auto-install is disabled:**
+```bash
+# Check current status
+echo $DISABLE_IDE_AUTO_EXTENSIONS
+# Output: 1 or true = disabled, empty = enabled
+```
+
+When extensions need to be installed (happens in background after IDE launches), you may see installation messages in a terminal. After installation completes, reload the IDE window to activate the extensions:
+
+- **VS Code**: Press `Ctrl+Shift+P` → "Developer: Reload Window"
+- **Cursor**: Press `Ctrl+Shift+P` → "Developer: Reload Window"  
+- **Windsurf**: Press `Ctrl+Shift+P` → "Developer: Reload Window"
+
+#### Manual Setup
+
+If you want to manually trigger extension installation without launching the IDE, run:
+
+```bash
+setup-ide-extensions
+```
+
+This single command will check and install extensions for **all installed IDEs** (VS Code, Windsurf, and Cursor).
+
+This is useful if you want to pre-install extensions, troubleshoot installation issues, or manually manage extensions after disabling auto-installation.
 
 #### Installed Extensions:
 - Remote - Containers (`ms-vscode-remote.remote-containers`)
@@ -261,7 +315,9 @@ setup-cursor-dev-extensions
 - Docker (`ms-azuretools.vscode-docker`)
 - DMS Theme (`DankLinux.dms-theme`)
 
-You can also install additional extensions manually using:
+#### Additional Extensions
+
+You can install additional extensions manually using:
 - VS Code: `code --install-extension <extension-id>`
 - Windsurf: `windsurf --install-extension <extension-id>`
 - Cursor: `cursor --install-extension <extension-id>`

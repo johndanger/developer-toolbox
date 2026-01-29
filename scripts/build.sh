@@ -16,6 +16,276 @@ install_common_tools() {
         kitty-terminfo
 }
 
+# Create unified IDE extension setup script (called by all IDE installers)
+create_unified_extension_setup() {
+    # Only create once
+    if [ -f /usr/local/bin/setup-ide-extensions ]; then
+        return 0
+    fi
+
+    cat > /usr/local/bin/setup-ide-extensions << 'EOF'
+#!/bin/bash
+# Unified setup script for IDE extensions (VS Code, Windsurf, Cursor)
+# Auto-detects installed IDEs and configures extensions for container development
+
+EXTENSIONS=(
+    "ms-vscode-remote.remote-containers"
+    "ms-vscode-remote.remote-ssh"
+    "ms-azuretools.vscode-docker"
+    "DankLinux.dms-theme"
+)
+
+# IDE configuration: command_name, display_name, real_binary_path
+declare -A IDES=(
+    ["code"]="VS Code"
+    ["windsurf"]="Windsurf"
+    ["cursor"]="Cursor"
+)
+
+# Find the real IDE binary (unwrapped version)
+find_real_ide_binary() {
+    local ide_cmd="$1"
+
+    # Check for .real version first
+    if [ -f "/usr/bin/${ide_cmd}.real" ]; then
+        echo "/usr/bin/${ide_cmd}.real"
+    elif [ -f "/usr/local/bin/${ide_cmd}.real" ]; then
+        echo "/usr/local/bin/${ide_cmd}.real"
+    elif command -v "$ide_cmd" >/dev/null 2>&1; then
+        which "$ide_cmd"
+    else
+        echo ""
+    fi
+}
+
+# Check if extensions are installed for a specific IDE
+check_ide_extensions() {
+    local ide_binary="$1"
+
+    if [ ! -f "$ide_binary" ]; then
+        echo "0"
+        return
+    fi
+
+    local installed_extensions
+    installed_extensions=$("$ide_binary" --list-extensions 2>/dev/null || echo "")
+
+    local missing=0
+    for ext in "${EXTENSIONS[@]}"; do
+        if ! echo "$installed_extensions" | grep -q "^${ext}$"; then
+            ((missing++))
+        fi
+    done
+
+    echo "$missing"
+}
+
+# Install extensions for a specific IDE
+install_ide_extensions() {
+    local ide_binary="$1"
+    local ide_name="$2"
+    local success=false
+
+    echo "Installing $ide_name extensions for container development..."
+    echo ""
+
+    for ext in "${EXTENSIONS[@]}"; do
+        # Check if already installed
+        if "$ide_binary" --list-extensions 2>/dev/null | grep -q "^${ext}$"; then
+            echo "  ✓ $ext (already installed)"
+            success=true
+        else
+            echo -n "  Installing $ext... "
+            local install_output
+            install_output=$("$ide_binary" --install-extension "$ext" --force 2>&1)
+            if echo "$install_output" | grep -q "successfully installed\|already installed\|Extension.*is already installed"; then
+                echo "✓"
+                success=true
+            else
+                echo "⚠ (failed)"
+                echo "    Error: $install_output" | head -n 1
+            fi
+        fi
+    done
+
+    echo ""
+    if [ "$success" = true ]; then
+        echo "✓ $ide_name extension setup complete!"
+    else
+        echo "⚠ Some extensions failed to install. They will be retried on next launch."
+    fi
+    echo ""
+
+    return 0
+}
+
+# Main execution: process all installed IDEs
+for ide_cmd in "${!IDES[@]}"; do
+    ide_binary=$(find_real_ide_binary "$ide_cmd")
+
+    # Skip if IDE is not installed
+    if [ -z "$ide_binary" ] || [ ! -f "$ide_binary" ]; then
+        continue
+    fi
+
+    # Check if auto-install is disabled
+    if [ "$DISABLE_IDE_AUTO_EXTENSIONS" = "1" ] || [ "$DISABLE_IDE_AUTO_EXTENSIONS" = "true" ]; then
+        continue
+    fi
+
+    # Check if extensions are missing
+    missing_count=$(check_ide_extensions "$ide_binary")
+    if [ "$missing_count" -gt 0 ]; then
+        install_ide_extensions "$ide_binary" "${IDES[$ide_cmd]}"
+    fi
+done
+
+exit 0
+EOF
+
+    chmod +x /usr/local/bin/setup-ide-extensions
+}
+
+# Create wrapper script for an IDE command
+create_ide_wrapper() {
+    local ide_cmd="$1"
+    local original_path="$2"
+
+    # Validate inputs
+    if [ -z "$ide_cmd" ] || [ -z "$original_path" ]; then
+        echo "Error: IDE command or path not provided to wrapper creation"
+        return 1
+    fi
+
+    # Only wrap if original exists and isn't already wrapped
+    if [ ! -f "${original_path}" ]; then
+        echo "Warning: ${original_path} not found, skipping wrapper creation"
+        return 1
+    fi
+
+    # Check if it's a symlink pointing to our wrapper (already wrapped)
+    if [ -L "${original_path}" ] && readlink "${original_path}" | grep -q "${ide_cmd}-wrapped"; then
+        echo "IDE ${ide_cmd} already wrapped, skipping..."
+        return 0
+    fi
+
+    if [ -f "${original_path}.real" ]; then
+        echo "IDE ${ide_cmd} already has .real file, skipping..."
+        return 0
+    fi
+
+    echo "Creating wrapper for ${ide_cmd} at ${original_path}..."
+
+    # Create the wrapper script with proper variable escaping
+    cat > "/usr/local/bin/${ide_cmd}-wrapped" << 'WRAPPER_EOF'
+#!/bin/bash
+# Wrapper for IDE to auto-install extensions on first launch
+
+# Create a marker file to confirm wrapper was executed
+touch /tmp/ide-wrapper-executed-$$.tmp
+
+# Determine which IDE we are by checking what we're linked to
+REAL_SCRIPT=$(readlink -f "$0")
+SCRIPT_NAME=$(basename "$REAL_SCRIPT")
+IDE_CMD="${SCRIPT_NAME%-wrapped}"
+
+# If we couldn't determine from the script name, check the symlink
+if [ -z "$IDE_CMD" ] || [ "$IDE_CMD" = "$SCRIPT_NAME" ]; then
+    # Check what symlink points to us
+    SYMLINK_NAME=$(basename "$(readlink -f "$0" | xargs dirname)")/$(basename "$0")
+    if [[ "$SYMLINK_NAME" == *"code"* ]]; then
+        IDE_CMD="code"
+    elif [[ "$SYMLINK_NAME" == *"windsurf"* ]]; then
+        IDE_CMD="windsurf"
+    elif [[ "$SYMLINK_NAME" == *"cursor"* ]]; then
+        IDE_CMD="cursor"
+    fi
+fi
+
+# Find the real binary - check multiple possible locations
+REAL_BINARY=""
+for path in "/usr/bin/${IDE_CMD}.real" "/usr/local/bin/${IDE_CMD}.real" "/opt/${IDE_CMD}/${IDE_CMD}.real"; do
+    if [ -f "$path" ]; then
+        REAL_BINARY="$path"
+        break
+    fi
+done
+
+if [ -z "$REAL_BINARY" ]; then
+    echo "Error: Real binary for ${IDE_CMD} not found!" >&2
+    echo "Searched locations:" >&2
+    echo "  /usr/bin/${IDE_CMD}.real" >&2
+    echo "  /usr/local/bin/${IDE_CMD}.real" >&2
+    echo "  /opt/${IDE_CMD}/${IDE_CMD}.real" >&2
+    exit 1
+fi
+
+# Log that we found the binary and are about to start background process
+echo "$(date): Wrapper executed for ${IDE_CMD}, binary: ${REAL_BINARY}" >> /tmp/ide-wrapper-trace.log
+
+# Launch extension installer in background (properly detached from shell)
+# We need to fully detach this process so it survives the exec below
+if [ "$DISABLE_IDE_AUTO_EXTENSIONS" != "1" ] && [ "$DISABLE_IDE_AUTO_EXTENSIONS" != "true" ]; then
+    if command -v setup-ide-extensions >/dev/null 2>&1; then
+        echo "$(date): Starting background extension installer for ${IDE_CMD}" >> /tmp/ide-wrapper-trace.log
+        # Fork into background with nohup and redirect all file descriptors
+        # This ensures the process survives when we exec below
+        nohup bash -c "
+            # Wait for IDE to fully initialize
+            sleep 12
+
+            # Run extension setup and log output
+            LOG_FILE=\"/tmp/ide-extension-setup-${IDE_CMD}-\$(date +%s).log\"
+            echo \"=== IDE Extension Setup Log for ${IDE_CMD} ===\" > \"\$LOG_FILE\"
+            echo \"Started at: \$(date)\" >> \"\$LOG_FILE\"
+            echo \"\" >> \"\$LOG_FILE\"
+
+            setup-ide-extensions >> \"\$LOG_FILE\" 2>&1
+
+            echo \"\" >> \"\$LOG_FILE\"
+            echo \"Completed at: \$(date)\" >> \"\$LOG_FILE\"
+
+            # Keep only the 3 most recent log files
+            ls -t /tmp/ide-extension-setup-${IDE_CMD}-*.log 2>/dev/null | tail -n +4 | xargs -r rm -f
+        " >/dev/null 2>&1 </dev/null &
+
+        # Disown the background job so it's not tied to this shell
+        disown -a 2>/dev/null || true
+        echo "$(date): Background process started for ${IDE_CMD}" >> /tmp/ide-wrapper-trace.log
+    else
+        echo "$(date): setup-ide-extensions not found for ${IDE_CMD}" >> /tmp/ide-wrapper-trace.log
+    fi
+else
+    echo "$(date): Auto-extensions disabled for ${IDE_CMD}" >> /tmp/ide-wrapper-trace.log
+fi
+
+# Launch the real IDE with all arguments (foreground)
+echo "$(date): Executing real binary for ${IDE_CMD}" >> /tmp/ide-wrapper-trace.log
+exec "$REAL_BINARY" "$@"
+WRAPPER_EOF
+
+    chmod +x "/usr/local/bin/${ide_cmd}-wrapped"
+
+    # Move original binary and replace with wrapper
+    echo "  Moving ${original_path} to ${original_path}.real"
+    if ! mv "${original_path}" "${original_path}.real"; then
+        echo "Error: Failed to move ${original_path} to ${original_path}.real"
+        rm -f "/usr/local/bin/${ide_cmd}-wrapped"
+        return 1
+    fi
+
+    echo "  Creating symlink ${original_path} -> /usr/local/bin/${ide_cmd}-wrapped"
+    if ! ln -sf "/usr/local/bin/${ide_cmd}-wrapped" "${original_path}"; then
+        echo "Error: Failed to create symlink"
+        mv "${original_path}.real" "${original_path}"  # Restore original
+        rm -f "/usr/local/bin/${ide_cmd}-wrapped"
+        return 1
+    fi
+
+    echo "✓ Wrapper created for ${ide_cmd}"
+    return 0
+}
+
 install_language_servers() {
     local servers="$1"
 
@@ -124,6 +394,9 @@ install_zed() {
 install_vscode() {
     echo "Installing VS Code..."
 
+    # Create unified extension setup script (shared with Windsurf/Cursor)
+    create_unified_extension_setup
+
     # Import Microsoft GPG key
     rpm --import https://packages.microsoft.com/keys/microsoft.asc
 
@@ -140,107 +413,19 @@ EOF
     # Install VS Code
     dnf install -y code
 
-    # Create a first-run script to install recommended extensions
-    # This avoids permission issues from installing as root during build
-    cat > /usr/local/bin/setup-vscode-dev-extensions << 'EOF'
-#!/bin/bash
-# Setup recommended VS Code extensions for container-based development
-# Run this once after first launching VS Code in the container
-
-EXTENSIONS=(
-    "ms-vscode-remote.remote-containers"
-    "ms-vscode-remote.remote-ssh"
-    "ms-azuretools.vscode-docker"
-    "DankLinux.dms-theme"
-)
-
-echo "Installing recommended VS Code extensions for container development..."
-
-for ext in "${EXTENSIONS[@]}"; do
-    echo "Installing: $ext"
-    code --install-extension "$ext"
-done
-
-echo ""
-echo "✓ All recommended extensions installed!"
-echo "You may need to reload VS Code for extensions to take effect."
-EOF
-
-    chmod +x /usr/local/bin/setup-vscode-dev-extensions
-
-    # Create a first-run script for VS Code users
-    mkdir -p /etc/profile.d
-    cat > /etc/profile.d/vscode-setup-auto.sh << 'EOFMOTD'
-# Auto-run VS Code extension setup on first login
-if [ -n "$BASH_VERSION" ] || [ -n "$ZSH_VERSION" ]; then
-    if command -v code >/dev/null 2>&1; then
-        if [ ! -f "$HOME/.vscode-extensions-setup-done" ]; then
-            echo ""
-            echo "╔════════════════════════════════════════════════════════════╗"
-            echo "║  First-time setup: Installing VS Code extensions...       ║"
-            echo "╚════════════════════════════════════════════════════════════╝"
-            echo ""
-
-            # Try to run the setup script automatically
-            if command -v setup-vscode-dev-extensions >/dev/null 2>&1; then
-                if setup-vscode-dev-extensions 2>/dev/null; then
-                    echo "✓ Extensions installed successfully!"
-                else
-                    echo "⚠ Automatic installation failed. Run 'setup-vscode-dev-extensions' manually when ready."
-                    # Still mark as done to avoid repeated attempts
-                    touch "$HOME/.vscode-extensions-setup-done"
-                fi
-            fi
-        fi
-    fi
-fi
-EOFMOTD
-
-    # Create the setup script with smart error handling
-    cat > /usr/local/bin/setup-vscode-dev-extensions << 'EOF'
-#!/bin/bash
-# Setup recommended VS Code extensions for container-based development
-
-EXTENSIONS=(
-    "ms-vscode-remote.remote-containers"
-    "ms-vscode-remote.remote-ssh"
-    "ms-azuretools.vscode-docker"
-    "DankLinux.dms-theme"
-)
-
-echo "Installing recommended VS Code extensions for container development..."
-echo ""
-
-# Track if any installation succeeded
-SUCCESS=false
-
-for ext in "${EXTENSIONS[@]}"; do
-    echo -n "  Installing $ext... "
-    if code --install-extension "$ext" --force >/dev/null 2>&1; then
-        echo "✓"
-        SUCCESS=true
+    # Create wrapper for VS Code command
+    CODE_PATH=$(which code 2>/dev/null)
+    if [ -n "$CODE_PATH" ] && [ -f "$CODE_PATH" ]; then
+        create_ide_wrapper "code" "$CODE_PATH" || echo "Warning: Failed to create wrapper for VS Code"
     else
-        echo "⚠ (will retry when VS Code is running)"
+        echo "Warning: VS Code binary not found, skipping wrapper creation"
     fi
-done
-
-# Create marker file
-touch "$HOME/.vscode-extensions-setup-done"
-
-echo ""
-if [ "$SUCCESS" = true ]; then
-    echo "✓ Extension setup complete! Reload VS Code to activate extensions."
-else
-    echo "ℹ Extensions will install automatically when you first launch VS Code."
-fi
-
-exit 0
-EOF
-
-    chmod +x /usr/local/bin/setup-vscode-dev-extensions
 
     echo ""
-    echo "VS Code installed. Users can run 'setup-vscode-dev-extensions' to install recommended extensions."
+    echo "✓ VS Code installed successfully!"
+    echo ""
+    echo "Extensions will be auto-installed when you first launch VS Code."
+    echo "If extensions don't install automatically, run: setup-ide-extensions"
     echo ""
 }
 
@@ -266,79 +451,22 @@ EOF
     dnf check-update || true
     dnf install -y windsurf
 
-    # Create a first-run script for Windsurf users
-    mkdir -p /etc/profile.d
-    cat > /etc/profile.d/windsurf-setup-auto.sh << 'EOFMOTD'
-# Auto-run Windsurf extension setup on first login
-if [ -n "$BASH_VERSION" ] || [ -n "$ZSH_VERSION" ]; then
-    if command -v windsurf >/dev/null 2>&1; then
-        if [ ! -f "$HOME/.windsurf-extensions-setup-done" ]; then
-            echo ""
-            echo "╔════════════════════════════════════════════════════════════╗"
-            echo "║  First-time setup: Installing Windsurf extensions...      ║"
-            echo "╚════════════════════════════════════════════════════════════╝"
-            echo ""
+    # Create unified extension setup script
+    create_unified_extension_setup
 
-            # Try to run the setup script automatically
-            if command -v setup-windsurf-dev-extensions >/dev/null 2>&1; then
-                if setup-windsurf-dev-extensions 2>/dev/null; then
-                    echo "✓ Extensions installed successfully!"
-                else
-                    echo "⚠ Automatic installation failed. Run 'setup-windsurf-dev-extensions' manually when ready."
-                    # Still mark as done to avoid repeated attempts
-                    touch "$HOME/.windsurf-extensions-setup-done"
-                fi
-            fi
-        fi
-    fi
-fi
-EOFMOTD
-
-    # Create the setup script with smart error handling
-    cat > /usr/local/bin/setup-windsurf-dev-extensions << 'EOF'
-#!/bin/bash
-# Setup recommended Windsurf extensions for container-based development
-
-EXTENSIONS=(
-    "ms-vscode-remote.remote-containers"
-    "ms-vscode-remote.remote-ssh"
-    "ms-azuretools.vscode-docker"
-    "DankLinux.dms-theme"
-)
-
-echo "Installing recommended Windsurf extensions for container development..."
-echo ""
-
-# Track if any installation succeeded
-SUCCESS=false
-
-for ext in "${EXTENSIONS[@]}"; do
-    echo -n "  Installing $ext... "
-    if windsurf --install-extension "$ext" --force >/dev/null 2>&1; then
-        echo "✓"
-        SUCCESS=true
+    # Create wrapper for Windsurf command
+    WINDSURF_PATH=$(which windsurf 2>/dev/null)
+    if [ -n "$WINDSURF_PATH" ] && [ -f "$WINDSURF_PATH" ]; then
+        create_ide_wrapper "windsurf" "$WINDSURF_PATH" || echo "Warning: Failed to create wrapper for Windsurf"
     else
-        echo "⚠ (will retry when Windsurf is running)"
+        echo "Warning: Windsurf binary not found, skipping wrapper creation"
     fi
-done
-
-# Create marker file
-touch "$HOME/.windsurf-extensions-setup-done"
-
-echo ""
-if [ "$SUCCESS" = true ]; then
-    echo "✓ Extension setup complete! Reload Windsurf to activate extensions."
-else
-    echo "ℹ Extensions will install automatically when you first launch Windsurf."
-fi
-
-exit 0
-EOF
-
-    chmod +x /usr/local/bin/setup-windsurf-dev-extensions
 
     echo ""
-    echo "Windsurf installed. Users can run 'setup-windsurf-dev-extensions' to install recommended extensions."
+    echo "✓ Windsurf installed successfully!"
+    echo ""
+    echo "Extensions will be auto-installed when you first launch Windsurf."
+    echo "If extensions don't install automatically, run: setup-ide-extensions"
     echo ""
 }
 
@@ -363,79 +491,23 @@ install_cursor() {
 
     echo "Cursor installed successfully!"
 
-    # Create a first-run script for Cursor users
-    mkdir -p /etc/profile.d
-    cat > /etc/profile.d/cursor-setup-auto.sh << 'EOFMOTD'
-# Auto-run Cursor extension setup on first login
-if [ -n "$BASH_VERSION" ] || [ -n "$ZSH_VERSION" ]; then
-    if command -v cursor >/dev/null 2>&1; then
-        if [ ! -f "$HOME/.cursor-extensions-setup-done" ]; then
-            echo ""
-            echo "╔════════════════════════════════════════════════════════════╗"
-            echo "║  First-time setup: Installing Cursor extensions...        ║"
-            echo "╚════════════════════════════════════════════════════════════╝"
-            echo ""
+    # Create unified extension setup script
+    create_unified_extension_setup
 
-            # Try to run the setup script automatically
-            if command -v setup-cursor-dev-extensions >/dev/null 2>&1; then
-                if setup-cursor-dev-extensions 2>/dev/null; then
-                    echo "✓ Extensions installed successfully!"
-                else
-                    echo "⚠ Automatic installation failed. Run 'setup-cursor-dev-extensions' manually when ready."
-                    # Still mark as done to avoid repeated attempts
-                    touch "$HOME/.cursor-extensions-setup-done"
-                fi
-            fi
-        fi
-    fi
-fi
-EOFMOTD
-
-    # Create the setup script with smart error handling
-    cat > /usr/local/bin/setup-cursor-dev-extensions << 'EOF'
-#!/bin/bash
-# Setup recommended Cursor extensions for container-based development
-
-EXTENSIONS=(
-    "anysphere.remote-containers"
-    "anysphere-remote.remote-ssh"
-    "ms-azuretools.vscode-docker"
-    "DankLinux.dms-theme"
-)
-
-echo "Installing recommended Cursor extensions for container development..."
-echo ""
-
-# Track if any installation succeeded
-SUCCESS=false
-
-for ext in "${EXTENSIONS[@]}"; do
-    echo -n "  Installing $ext... "
-    if cursor --install-extension "$ext" --force >/dev/null 2>&1; then
-        echo "✓"
-        SUCCESS=true
+    # Create wrapper for Cursor command
+    CURSOR_PATH=$(which cursor 2>/dev/null)
+    if [ -n "$CURSOR_PATH" ] && [ -f "$CURSOR_PATH" ]; then
+        create_ide_wrapper "cursor" "$CURSOR_PATH" || echo "Warning: Failed to create wrapper for Cursor"
     else
-        echo "⚠ (will retry when Cursor is running)"
+        echo "Warning: Cursor binary not found, skipping wrapper creation"
     fi
-done
-
-# Create marker file
-touch "$HOME/.cursor-extensions-setup-done"
-
-echo ""
-if [ "$SUCCESS" = true ]; then
-    echo "✓ Extension setup complete! Reload Cursor to activate extensions."
-else
-    echo "ℹ Extensions will install automatically when you first launch Cursor."
-fi
-
-exit 0
-EOF
-
-    chmod +x /usr/local/bin/setup-cursor-dev-extensions
 
     echo ""
-    echo "Cursor installed. Users can run 'setup-cursor-dev-extensions' to install recommended extensions."
+    echo "✓ Cursor installed successfully!"
+    echo ""
+    echo "Extensions will be auto-installed when you first launch Cursor."
+    echo "If extensions don't install automatically, run: setup-ide-extensions"
+    echo "You can also check logs at: /tmp/ide-extension-setup-cursor-*.log"
     echo ""
 }
 
