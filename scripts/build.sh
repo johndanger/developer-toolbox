@@ -13,7 +13,128 @@ install_common_tools() {
         wget \
         gnupg2 \
         dnf-plugins-core \
-        kitty-terminfo
+        kitty-terminfo \
+        xdg-utils
+}
+
+# Create browser integration for distrobox
+setup_browser_integration() {
+    echo "Setting up browser integration for container..."
+
+    # Install host-spawn if available (used by distrobox-host-exec)
+    dnf install -y host-spawn 2>/dev/null || echo "host-spawn not available in repos, will use distrobox-host-exec directly"
+
+    # Create a custom xdg-open script that forwards to host browser
+    cat > /usr/local/bin/xdg-open-host << 'EOF'
+#!/bin/bash
+# Custom xdg-open wrapper for distrobox containers
+# Forwards URL opening to the host system
+
+# Log the attempt for debugging
+echo "$(date): xdg-open-host called with: $*" >> /tmp/xdg-open-debug.log
+
+# Function to try opening URL on host
+try_host_open() {
+    local url="$1"
+    local method="$2"
+
+    echo "$(date): Trying $method to open: $url" >> /tmp/xdg-open-debug.log
+
+    case "$method" in
+        "distrobox-host-exec")
+            if command -v distrobox-host-exec >/dev/null 2>&1; then
+                distrobox-host-exec xdg-open "$url" 2>/dev/null && return 0
+            fi
+            ;;
+        "host-spawn")
+            if command -v host-spawn >/dev/null 2>&1; then
+                host-spawn xdg-open "$url" 2>/dev/null && return 0
+            fi
+            ;;
+        "flatpak-spawn")
+            if [ -n "$DISPLAY" ] && command -v flatpak-spawn >/dev/null 2>&1; then
+                flatpak-spawn --host xdg-open "$url" 2>/dev/null && return 0
+            fi
+            ;;
+        "direct-host")
+            if [ -x /run/host/usr/bin/xdg-open ]; then
+                /run/host/usr/bin/xdg-open "$url" 2>/dev/null && return 0
+            elif [ -x /usr/bin/xdg-open.host ]; then
+                /usr/bin/xdg-open.host "$url" 2>/dev/null && return 0
+            fi
+            ;;
+    esac
+
+    return 1
+}
+
+# Try different methods in order of preference
+for method in "distrobox-host-exec" "host-spawn" "flatpak-spawn" "direct-host"; do
+    if try_host_open "$1" "$method"; then
+        echo "$(date): Successfully opened via $method" >> /tmp/xdg-open-debug.log
+        exit 0
+    fi
+done
+
+# All methods failed - show URL to user
+echo "$(date): All methods failed, showing URL to user" >> /tmp/xdg-open-debug.log
+echo "==================================================================="
+echo "Unable to open URL automatically in host browser."
+echo "Please copy and paste this URL into your host browser:"
+echo ""
+echo "$1"
+echo ""
+echo "==================================================================="
+
+# Try to copy to clipboard if possible
+if command -v wl-copy >/dev/null 2>&1; then
+    echo "$1" | wl-copy 2>/dev/null && echo "(URL copied to clipboard)"
+elif command -v xclip >/dev/null 2>&1; then
+    echo "$1" | xclip -selection clipboard 2>/dev/null && echo "(URL copied to clipboard)"
+fi
+
+exit 0
+EOF
+
+    chmod +x /usr/local/bin/xdg-open-host
+
+    # Replace system xdg-open with our wrapper
+    if [ -f /usr/bin/xdg-open ]; then
+        mv /usr/bin/xdg-open /usr/bin/xdg-open.orig
+        ln -sf /usr/local/bin/xdg-open-host /usr/bin/xdg-open
+    fi
+
+    # Also create the wrapper as xdg-open in case some apps look for it specifically
+    ln -sf /usr/local/bin/xdg-open-host /usr/local/bin/xdg-open
+
+    # Set BROWSER environment variable for applications that respect it
+    echo 'export BROWSER="/usr/local/bin/xdg-open-host"' >> /etc/environment
+
+    # Create a desktop entry for URL handling
+    mkdir -p /usr/share/applications
+    cat > /usr/share/applications/xdg-open-host.desktop << 'EOF'
+[Desktop Entry]
+Type=Application
+Name=Host Browser
+Exec=/usr/local/bin/xdg-open-host %u
+NoDisplay=true
+MimeType=x-scheme-handler/http;x-scheme-handler/https;x-scheme-handler/ftp;
+EOF
+
+    # Update desktop database
+    update-desktop-database /usr/share/applications 2>/dev/null || true
+
+    # Install the browser integration test scripts
+    cp /ctx/scripts/test-browser-integration.sh /usr/local/bin/test-browser-integration
+    chmod +x /usr/local/bin/test-browser-integration
+
+    cp /ctx/scripts/test-cursor-login.sh /usr/local/bin/test-cursor-login
+    chmod +x /usr/local/bin/test-cursor-login
+
+    echo "Browser integration setup complete."
+    echo "URLs opened by applications will now be forwarded to the host browser."
+    echo "Run 'test-browser-integration' to test the setup."
+    echo "Run 'test-cursor-login' to test Cursor-specific login scenarios."
 }
 
 # Create unified IDE extension setup script (called by all IDE installers)
@@ -734,6 +855,7 @@ install_ide() {
 LSP_SERVERS="${2:-}"
 
 install_common_tools
+setup_browser_integration
 
 # Main installation logic
 case "${IDE_TO_INSTALL,,}" in

@@ -184,6 +184,50 @@ list-ides:
     @echo "  just build-local"
     @echo "  just install                       # Build + Create + Export all"
 
+# Test browser integration in the container
+test-browser:
+    #!/usr/bin/env bash
+    echo "Testing browser integration..."
+    echo "This will test if URLs can be opened in the host browser from within the container."
+    echo ""
+    if ! distrobox list | grep -q devtoolbox; then
+        echo "Error: devtoolbox container not found"
+        echo "Run 'just create' first to create the container"
+        exit 1
+    fi
+    distrobox enter devtoolbox -- test-browser-integration
+
+# Check browser integration status
+check-browser:
+    #!/usr/bin/env bash
+    echo "Checking browser integration status..."
+    if ! distrobox list | grep -q devtoolbox; then
+        echo "Error: devtoolbox container not found"
+        echo "Run 'just create' first to create the container"
+        exit 1
+    fi
+    echo "Checking if xdg-open-host wrapper is installed..."
+    distrobox enter devtoolbox -- ls -la /usr/local/bin/xdg-open-host
+    echo ""
+    echo "Checking if system xdg-open is redirected..."
+    distrobox enter devtoolbox -- ls -la /usr/bin/xdg-open
+    echo ""
+    echo "Checking available host integration tools..."
+    distrobox enter devtoolbox -- bash -c 'for tool in distrobox-host-exec host-spawn flatpak-spawn; do echo -n "$tool: "; if command -v $tool >/dev/null 2>&1; then echo "Available"; else echo "Not found"; fi; done'
+
+# Test Cursor login scenarios
+test-cursor-login:
+    #!/usr/bin/env bash
+    echo "Testing Cursor login browser integration..."
+    echo "This simulates what happens when Cursor tries to open login URLs."
+    echo ""
+    if ! distrobox list | grep -q devtoolbox; then
+        echo "Error: devtoolbox container not found"
+        echo "Run 'just create' first to create the container"
+        exit 1
+    fi
+    distrobox enter devtoolbox -- test-cursor-login
+
 # Complete installation wrapper using enhanced script
 install-complete ide="all":
     ./install-ides.sh {{ide}}

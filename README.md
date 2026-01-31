@@ -11,6 +11,7 @@ A flexible container build system for creating development environments with you
 - **Selective IDE Installation**: Choose which IDE to install (Zed, VS Code, Cursor, or all)
 - **Container-based Development**: Uses Fedora 42 as the base image
 - **Distrobox Integration**: Easy integration with your host system
+- **Browser Integration**: Automatic URL forwarding to host browser for IDE authentication and links
 - **Justfile Automation**: Simple commands for building and managing containers
 
 ## Quick Start
@@ -321,6 +322,52 @@ You can install additional extensions manually using:
 - VS Code: `code --install-extension <extension-id>`
 - Windsurf: `windsurf --install-extension <extension-id>`
 - Cursor: `cursor --install-extension <extension-id>`
+
+### Browser Integration
+
+The developer toolbox includes automatic browser integration that allows applications running inside the container (like Cursor, VS Code, etc.) to open URLs in your host browser instead of requiring a browser inside the container.
+
+#### How It Works
+
+When an application tries to open a URL (like for authentication or external links), the system automatically forwards the request to your host browser using:
+
+1. **distrobox-host-exec** - Primary method for distrobox containers
+2. **host-spawn** - Alternative method if available  
+3. **flatpak-spawn** - For flatpak-based setups
+4. **Direct host access** - Fallback for mounted host tools
+
+#### Testing Browser Integration
+
+To test if browser integration is working correctly:
+
+```bash
+# Test the integration
+just test-browser
+
+# Check integration status
+just check-browser
+
+# Manual test from inside container
+distrobox enter devtoolbox -- test-browser-integration
+```
+
+#### Common Browser Integration Issues
+
+**URLs don't open in host browser:**
+1. Make sure you're using distrobox (not plain podman/docker)
+2. Verify the container was built with the latest version that includes browser integration
+3. Test the integration: `just test-browser`
+
+**Authentication fails in IDEs (Cursor, VS Code):**
+1. The login URL should automatically open in your host browser
+2. Complete the authentication in the host browser
+3. The IDE should detect the successful authentication automatically
+
+**Manual URL opening:**
+If automatic opening fails, the system will display the URL and copy it to clipboard (if available). You can manually paste it into your host browser.
+
+**Debug information:**
+Check `/tmp/xdg-open-debug.log` inside the container for detailed information about URL opening attempts.
 
 ## Troubleshooting
 
