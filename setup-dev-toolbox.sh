@@ -93,6 +93,10 @@ show_usage() {
     echo "  1. Builds container with selected IDEs"
     echo "  2. Creates distrobox container"
     echo "  3. Exports applications to host system"
+    echo
+    echo "Browser Integration:"
+    echo "  --test-browser     Test browser integration after setup"
+    echo "  --fix-browser      Fix browser integration issues"
 }
 
 # Interactive IDE selection using gum (preferred) or whiptail (fallback)
@@ -215,6 +219,127 @@ interactive_gum_selection() {
     echo
 }
 
+# Test browser integration
+test_browser_integration() {
+    log_info "Testing browser integration..."
+
+    if ! distrobox list | grep -q "$CONTAINER_NAME"; then
+        log_error "Container '$CONTAINER_NAME' not found"
+        return 1
+    fi
+
+    echo "Testing xdg-open functionality in container..."
+    distrobox enter "$CONTAINER_NAME" -- bash -c '
+        echo "=== Browser Integration Test ==="
+        echo "1. Testing xdg-open wrapper..."
+        if command -v xdg-open >/dev/null 2>&1; then
+            echo "✅ xdg-open found at: $(which xdg-open)"
+        else
+            echo "❌ xdg-open not found"
+            exit 1
+        fi
+
+        echo "2. Testing distrobox-host-exec..."
+        if command -v distrobox-host-exec >/dev/null 2>&1; then
+            echo "✅ distrobox-host-exec available"
+            echo "   Testing host command execution..."
+            if distrobox-host-exec echo "Host command test successful" 2>/dev/null; then
+                echo "✅ Host command execution works"
+            else
+                echo "❌ Host command execution failed"
+            fi
+        else
+            echo "❌ distrobox-host-exec not available"
+        fi
+
+        echo "3. Testing browser environment..."
+        echo "   BROWSER=$BROWSER"
+        echo "   XDG_CURRENT_DESKTOP=$XDG_CURRENT_DESKTOP"
+
+        echo "4. Testing URL opening (this should open GitHub in your host browser)..."
+        echo "   If a browser opens, the integration is working!"
+        xdg-open "https://github.com" &
+        sleep 2
+
+        echo "=== Test Complete ==="
+        echo "Check above for any errors and verify browser opened on host"
+    '
+}
+
+# Fix browser integration issues
+fix_browser_integration() {
+    log_info "Fixing browser integration..."
+
+    if ! distrobox list | grep -q "$CONTAINER_NAME"; then
+        log_error "Container '$CONTAINER_NAME' not found"
+        return 1
+    fi
+
+    log_info "Recreating xdg-open wrapper with enhanced compatibility..."
+    distrobox enter "$CONTAINER_NAME" -- bash -c '
+        # Backup existing xdg-open
+        if [ -f /usr/bin/xdg-open ] && [ ! -f /usr/bin/xdg-open.orig ]; then
+            sudo cp /usr/bin/xdg-open /usr/bin/xdg-open.orig
+        fi
+
+        # Create enhanced xdg-open wrapper
+        sudo tee /usr/local/bin/xdg-open-host > /dev/null << "WRAPPER_EOF"
+#!/bin/bash
+# Enhanced xdg-open wrapper for distrobox
+LOG_FILE="/tmp/xdg-open-$(date +%Y%m%d).log"
+echo "$(date): xdg-open called with: $*" >> "$LOG_FILE"
+
+# Try distrobox-host-exec first (most reliable)
+if command -v distrobox-host-exec >/dev/null 2>&1; then
+    echo "$(date): Trying distrobox-host-exec" >> "$LOG_FILE"
+    if timeout 10 distrobox-host-exec xdg-open "$@" 2>>"$LOG_FILE"; then
+        echo "$(date): Success via distrobox-host-exec" >> "$LOG_FILE"
+        exit 0
+    fi
+fi
+
+# Try host-spawn if available
+if command -v host-spawn >/dev/null 2>&1; then
+    echo "$(date): Trying host-spawn" >> "$LOG_FILE"
+    if timeout 10 host-spawn xdg-open "$@" 2>>"$LOG_FILE"; then
+        echo "$(date): Success via host-spawn" >> "$LOG_FILE"
+        exit 0
+    fi
+fi
+
+# Fallback: show URL to user
+echo "========================================="
+echo "⚠️  Browser integration issue detected"
+echo "========================================="
+echo "Please copy this URL to your browser:"
+echo "$1"
+echo "========================================="
+
+# Try clipboard
+if command -v wl-copy >/dev/null 2>&1; then
+    echo "$1" | wl-copy && echo "✅ Copied to clipboard"
+fi
+
+echo "$(date): All methods failed, showed to user" >> "$LOG_FILE"
+exit 0
+WRAPPER_EOF
+
+        sudo chmod +x /usr/local/bin/xdg-open-host
+
+        # Replace system xdg-open
+        sudo ln -sf /usr/local/bin/xdg-open-host /usr/bin/xdg-open
+        sudo ln -sf /usr/local/bin/xdg-open-host /usr/local/bin/xdg-open
+
+        # Set environment variables
+        echo "export BROWSER=/usr/local/bin/xdg-open-host" | sudo tee -a /etc/environment
+
+        echo "Browser integration fix applied!"
+    '
+
+    log_success "Browser integration fix completed"
+    log_info "Test with: distrobox enter $CONTAINER_NAME -- xdg-open https://github.com"
+}
+
 # Debug function to diagnose export issues
 debug_container_state() {
     if [ -n "$DEBUG" ]; then
@@ -299,7 +424,13 @@ create_distrobox() {
     fi
 
     log_info "Creating new distrobox container"
-    if distrobox create -n "$CONTAINER_NAME" -i "$IMAGE_NAME" --volume /home/linuxbrew/.linuxbrew:/home/linuxbrew/.linuxbrew --yes; then
+    if distrobox create -n "$CONTAINER_NAME" -i "$IMAGE_NAME" \
+        --volume /home/linuxbrew/.linuxbrew:/home/linuxbrew/.linuxbrew \
+        --additional-flags "--hostname $CONTAINER_NAME" \
+        --additional-flags "--userns=keep-id" \
+        --additional-flags "--security-opt=label=disable" \
+        --additional-flags "--device=/dev/dri" \
+        --yes; then
         log_success "Distrobox container created successfully"
     else
         log_error "Failed to create distrobox container"
@@ -761,6 +892,14 @@ while [[ $# -gt 0 ]]; do
         -i|--interactive)
             INTERACTIVE="1"
             shift
+            ;;
+        --test-browser)
+            test_browser_integration
+            exit 0
+            ;;
+        --fix-browser)
+            fix_browser_integration
+            exit 0
             ;;
         LSP:*|lsp:*)
             LSP_SERVERS="${1#LSP:}"

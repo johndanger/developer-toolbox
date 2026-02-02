@@ -27,40 +27,60 @@ setup_browser_integration() {
     # Create a custom xdg-open script that forwards to host browser
     cat > /usr/local/bin/xdg-open-host << 'EOF'
 #!/bin/bash
-# Custom xdg-open wrapper for distrobox containers
-# Forwards URL opening to the host system
+# Enhanced xdg-open wrapper for distrobox containers
+# Forwards URL/file opening to the host system with improved compatibility
+
+# Create log directory if it doesn't exist
+mkdir -p /tmp/xdg-debug
+LOG_FILE="/tmp/xdg-debug/xdg-open.log"
 
 # Log the attempt for debugging
-echo "$(date): xdg-open-host called with: $*" >> /tmp/xdg-open-debug.log
+echo "$(date): xdg-open-host called with: $*" >> "$LOG_FILE"
 
-# Function to try opening URL on host
+# Function to try opening URL/file on host
 try_host_open() {
-    local url="$1"
+    local target="$1"
     local method="$2"
 
-    echo "$(date): Trying $method to open: $url" >> /tmp/xdg-open-debug.log
+    echo "$(date): Trying $method to open: $target" >> "$LOG_FILE"
 
     case "$method" in
         "distrobox-host-exec")
             if command -v distrobox-host-exec >/dev/null 2>&1; then
-                distrobox-host-exec xdg-open "$url" 2>/dev/null && return 0
+                # Try with timeout to prevent hanging
+                timeout 10 distrobox-host-exec xdg-open "$target" 2>>"$LOG_FILE" && return 0
             fi
             ;;
         "host-spawn")
             if command -v host-spawn >/dev/null 2>&1; then
-                host-spawn xdg-open "$url" 2>/dev/null && return 0
+                timeout 10 host-spawn xdg-open "$target" 2>>"$LOG_FILE" && return 0
             fi
             ;;
         "flatpak-spawn")
-            if [ -n "$DISPLAY" ] && command -v flatpak-spawn >/dev/null 2>&1; then
-                flatpak-spawn --host xdg-open "$url" 2>/dev/null && return 0
+            # Check if we're in a Flatpak environment and have access
+            if command -v flatpak-spawn >/dev/null 2>&1; then
+                timeout 10 flatpak-spawn --host xdg-open "$target" 2>>"$LOG_FILE" && return 0
+            fi
+            ;;
+        "podman-host")
+            # Try via podman host integration
+            if [ -S /run/host/run/user/$(id -u)/bus ]; then
+                DBUS_SESSION_BUS_ADDRESS="unix:path=/run/host/run/user/$(id -u)/bus" \
+                timeout 10 /run/host/usr/bin/xdg-open "$target" 2>>"$LOG_FILE" && return 0
             fi
             ;;
         "direct-host")
-            if [ -x /run/host/usr/bin/xdg-open ]; then
-                /run/host/usr/bin/xdg-open "$url" 2>/dev/null && return 0
-            elif [ -x /usr/bin/xdg-open.host ]; then
-                /usr/bin/xdg-open.host "$url" 2>/dev/null && return 0
+            # Try various host paths
+            for host_path in "/run/host/usr/bin/xdg-open" "/usr/bin/xdg-open.orig" "/usr/bin/xdg-open.host"; do
+                if [ -x "$host_path" ]; then
+                    timeout 10 "$host_path" "$target" 2>>"$LOG_FILE" && return 0
+                fi
+            done
+            ;;
+        "systemd-run")
+            # Try via systemd-run if available (for user session on host)
+            if command -v systemd-run >/dev/null 2>&1; then
+                timeout 10 systemd-run --user --scope xdg-open "$target" 2>>"$LOG_FILE" && return 0
             fi
             ;;
     esac
@@ -68,30 +88,56 @@ try_host_open() {
     return 1
 }
 
+# Handle different argument patterns
+if [ $# -eq 0 ]; then
+    echo "Usage: xdg-open <URL|file>" >&2
+    exit 1
+fi
+
+# Get the target (URL or file)
+target="$1"
+
 # Try different methods in order of preference
-for method in "distrobox-host-exec" "host-spawn" "flatpak-spawn" "direct-host"; do
-    if try_host_open "$1" "$method"; then
-        echo "$(date): Successfully opened via $method" >> /tmp/xdg-open-debug.log
+methods=("distrobox-host-exec" "host-spawn" "podman-host" "flatpak-spawn" "systemd-run" "direct-host")
+
+for method in "${methods[@]}"; do
+    if try_host_open "$target" "$method"; then
+        echo "$(date): Successfully opened '$target' via $method" >> "$LOG_FILE"
         exit 0
     fi
 done
 
-# All methods failed - show URL to user
-echo "$(date): All methods failed, showing URL to user" >> /tmp/xdg-open-debug.log
-echo "==================================================================="
-echo "Unable to open URL automatically in host browser."
-echo "Please copy and paste this URL into your host browser:"
-echo ""
-echo "$1"
-echo ""
-echo "==================================================================="
+# All methods failed - provide user-friendly fallback
+echo "$(date): All methods failed for: $target" >> "$LOG_FILE"
+echo "============================================================="
+echo "⚠️  Unable to open automatically in host browser/application"
+echo "============================================================="
 
-# Try to copy to clipboard if possible
-if command -v wl-copy >/dev/null 2>&1; then
-    echo "$1" | wl-copy 2>/dev/null && echo "(URL copied to clipboard)"
-elif command -v xclip >/dev/null 2>&1; then
-    echo "$1" | xclip -selection clipboard 2>/dev/null && echo "(URL copied to clipboard)"
+# Check if it's a URL or file
+if [[ "$target" =~ ^https?:// ]] || [[ "$target" =~ ^ftp:// ]]; then
+    echo "📋 Please copy this URL to your host browser:"
+    echo ""
+    echo "   $target"
+    echo ""
+
+    # Try to copy to clipboard
+    if command -v wl-copy >/dev/null 2>&1; then
+        echo "$target" | wl-copy 2>/dev/null && echo "✅ URL copied to clipboard!"
+    elif command -v xclip >/dev/null 2>&1; then
+        echo "$target" | xclip -selection clipboard 2>/dev/null && echo "✅ URL copied to clipboard!"
+    elif command -v pbcopy >/dev/null 2>&1; then
+        echo "$target" | pbcopy 2>/dev/null && echo "✅ URL copied to clipboard!"
+    fi
+else
+    echo "📁 Please open this file/path on your host system:"
+    echo ""
+    echo "   $target"
+    echo ""
 fi
+
+echo "💡 You can also try running: distrobox-host-exec xdg-open '$target'"
+echo "🔧 Debug log: $LOG_FILE"
+echo "============================================================="
 
 exit 0
 EOF
@@ -107,8 +153,23 @@ EOF
     # Also create the wrapper as xdg-open in case some apps look for it specifically
     ln -sf /usr/local/bin/xdg-open-host /usr/local/bin/xdg-open
 
-    # Set BROWSER environment variable for applications that respect it
-    echo 'export BROWSER="/usr/local/bin/xdg-open-host"' >> /etc/environment
+    # Set environment variables for applications
+    cat >> /etc/environment << 'ENVEOF'
+export BROWSER="/usr/local/bin/xdg-open-host"
+export XDG_CURRENT_DESKTOP="GNOME"
+ENVEOF
+
+    # Create profile script for shell sessions
+    cat > /etc/profile.d/container-browser.sh << 'PROFEOF'
+#!/bin/bash
+export BROWSER="/usr/local/bin/xdg-open-host"
+export XDG_CURRENT_DESKTOP="${XDG_CURRENT_DESKTOP:-GNOME}"
+
+# Create alias for easy testing
+alias test-browser='echo "Testing browser integration..."; xdg-open "https://github.com"'
+PROFEOF
+
+    chmod +x /etc/profile.d/container-browser.sh
 
     # Create a desktop entry for URL handling
     mkdir -p /usr/share/applications
