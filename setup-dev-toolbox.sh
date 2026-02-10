@@ -499,25 +499,10 @@ create_distrobox() {
     if distrobox "${DISTROBOX_ARGS[@]}"; then
         log_success "Distrobox container created successfully"
         
-        # Configure hostname resolution only if container sockets are mounted
-        if [ -n "$MOUNT_CONTAINERS" ]; then
-            log_info "Configuring host access hostnames..."
-            distrobox enter "$CONTAINER_NAME" -- bash -c '
-                # Get host IP from gateway (fallback to common Docker gateway)
-                HOST_IP=$(ip route | grep default | awk "{print \$3}" | head -n1 2>/dev/null || echo "172.17.0.1")
-                
-                # Add hostname entries if they don't exist - non-destructive
-                if [ -n "$HOST_IP" ] && [ "$HOST_IP" != "" ]; then
-                    if ! grep -q "host.docker.internal" /etc/hosts 2>/dev/null; then
-                        echo "$HOST_IP host.docker.internal" | sudo tee -a /etc/hosts > /dev/null 2>&1 || true
-                    fi
-                    
-                    if ! grep -q "host.containers.internal" /etc/hosts 2>/dev/null; then
-                        echo "$HOST_IP host.containers.internal" | sudo tee -a /etc/hosts > /dev/null 2>&1 || true
-                    fi
-                fi
-            ' 2>/dev/null || log_info "Hostname configuration skipped (optional feature)"
-        fi
+        # Note: Hostname configuration (host.docker.internal, host.containers.internal) 
+        # is skipped here to avoid interfering with distrobox export.
+        # If needed, configure manually after export:
+        # distrobox enter devtoolbox -- sudo sh -c 'echo "172.17.0.1 host.docker.internal host.containers.internal" >> /etc/hosts'
         
     else
         log_error "Failed to create distrobox container"

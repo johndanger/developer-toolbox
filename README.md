@@ -394,8 +394,9 @@ To enable host Docker/Podman access, use the `--mount-containers` flag:
 When the container is created with `--mount-containers`, the setup script:
 1. **Mounts Docker socket** (`/var/run/docker.sock`) if available on the host
 2. **Mounts Podman socket** (`/run/podman/podman.sock` or user socket) if available on the host
-3. **Configures hostname resolution** for `host.docker.internal` and `host.containers.internal`
-4. **Sets up Podman** to automatically use the host socket when available
+3. **Sets up Podman** to automatically use the host socket when available
+
+**Note:** Hostname resolution for `host.docker.internal` and `host.containers.internal` is not configured automatically to avoid interfering with distrobox export. If you need these hostnames, configure them manually after export (see below).
 
 #### Recommended Workflow
 
@@ -427,10 +428,37 @@ docker run hello-world
 podman ps
 podman run quay.io/fedora/fedora:42 echo "Hello from host Podman"
 
-# Access host services via special hostnames
+# Access host services via special hostnames (if manually configured)
+# See "Hostname Access" section below for configuration instructions
 curl http://host.docker.internal:8080
 curl http://host.containers.internal:8080
 ```
+
+#### Hostname Access
+
+If you need special hostnames for accessing the host, you can manually configure them:
+
+- **`host.docker.internal`** - Resolves to the host machine (for Docker compatibility)
+- **`host.containers.internal`** - Resolves to the host machine (for Podman compatibility)
+
+To configure these hostnames manually:
+
+```bash
+# Enter the container
+distrobox enter devtoolbox
+
+# Get the host IP (gateway IP)
+HOST_IP=$(ip route show default | awk '{print $3}' | head -n1)
+
+# Add hostname entries
+echo "$HOST_IP host.docker.internal host.containers.internal" | sudo tee -a /etc/hosts
+
+# Now you can access services running on the host
+curl http://host.docker.internal:8080
+curl http://host.containers.internal:8080
+```
+
+**Note:** These hostnames are not configured automatically to avoid interfering with distrobox export.
 
 #### Testing Container Runtime Access
 
@@ -448,9 +476,9 @@ distrobox enter devtoolbox -- bash -c '
     echo "Testing Podman..."
     podman ps 2>&1 || echo "Podman not available"
     
-    echo "Testing hostname resolution..."
-    ping -c 1 host.docker.internal
-    ping -c 1 host.containers.internal
+    echo "Testing hostname resolution (if configured)..."
+    ping -c 1 host.docker.internal 2>&1 || echo "host.docker.internal not configured"
+    ping -c 1 host.containers.internal 2>&1 || echo "host.containers.internal not configured"
 '
 ```
 
