@@ -97,9 +97,6 @@ show_usage() {
     echo "Browser Integration:"
     echo "  --test-browser     Test browser integration after setup"
     echo "  --fix-browser      Fix browser integration issues"
-    echo ""
-    echo "Container Runtime Access:"
-    echo "  --test-containers  Test Docker/Podman host access"
 }
 
 # Interactive IDE selection using gum (preferred) or whiptail (fallback)
@@ -220,79 +217,6 @@ interactive_gum_selection() {
     fi
 
     echo
-}
-
-# Test Docker/Podman host access
-test_container_runtime_access() {
-    log_info "Testing Docker/Podman host access..."
-    
-    if ! distrobox list | grep -q "$CONTAINER_NAME"; then
-        log_error "Container '$CONTAINER_NAME' not found"
-        return 1
-    fi
-    
-    distrobox enter "$CONTAINER_NAME" -- bash -c '
-        echo "=== Container Runtime Host Access Test ==="
-        
-        # Test Docker socket access
-        if [ -S /var/run/docker.sock ]; then
-            echo "✅ Docker socket found at /var/run/docker.sock"
-            if command -v docker >/dev/null 2>&1; then
-                echo "   Testing Docker connection..."
-                if docker ps >/dev/null 2>&1; then
-                    echo "   ✅ Docker host access working!"
-                    echo "   Docker version: $(docker --version 2>/dev/null || echo "unknown")"
-                else
-                    echo "   ⚠️  Docker socket mounted but connection failed"
-                    echo "   Error: $(docker ps 2>&1 | head -n1)"
-                fi
-            else
-                echo "   ⚠️  Docker socket mounted but docker command not found"
-                echo "   Install docker client: dnf install docker"
-            fi
-        else
-            echo "❌ Docker socket not found (/var/run/docker.sock)"
-        fi
-        
-        echo ""
-        
-        # Test Podman socket access
-        if [ -S /run/podman/podman.sock ]; then
-            echo "✅ Podman socket found at /run/podman/podman.sock"
-            if command -v podman >/dev/null 2>&1; then
-                echo "   Testing Podman connection..."
-                if DOCKER_HOST=unix:///run/podman/podman.sock podman ps >/dev/null 2>&1; then
-                    echo "   ✅ Podman host access working!"
-                    echo "   Podman version: $(podman --version 2>/dev/null || echo "unknown")"
-                else
-                    echo "   ⚠️  Podman socket mounted but connection failed"
-                    echo "   Error: $(DOCKER_HOST=unix:///run/podman/podman.sock podman ps 2>&1 | head -n1)"
-                fi
-            else
-                echo "   ⚠️  Podman socket mounted but podman command not found"
-            fi
-        else
-            echo "❌ Podman socket not found (/run/podman/podman.sock)"
-        fi
-        
-        echo ""
-        
-        # Test hostname resolution
-        echo "Testing hostname resolution..."
-        if ping -c 1 -W 1 host.docker.internal >/dev/null 2>&1; then
-            echo "✅ host.docker.internal resolves correctly"
-        else
-            echo "⚠️  host.docker.internal does not resolve (may need manual /etc/hosts entry)"
-        fi
-        
-        if ping -c 1 -W 1 host.containers.internal >/dev/null 2>&1; then
-            echo "✅ host.containers.internal resolves correctly"
-        else
-            echo "⚠️  host.containers.internal does not resolve (may need manual /etc/hosts entry)"
-        fi
-        
-        echo "=== Test Complete ==="
-    '
 }
 
 # Test browser integration
@@ -500,57 +424,14 @@ create_distrobox() {
     fi
 
     log_info "Creating new distrobox container"
-    
-    # Prepare volume mounts for Docker/Podman sockets
-    VOLUME_FLAGS="--volume /home/linuxbrew/.linuxbrew:/home/linuxbrew/.linuxbrew"
-    
-    # Mount Docker socket if available
-    if [ -S /var/run/docker.sock ]; then
-        log_info "Mounting Docker socket for host Docker access"
-        VOLUME_FLAGS="$VOLUME_FLAGS --volume /var/run/docker.sock:/var/run/docker.sock"
-    else
-        log_info "Docker socket not found, skipping Docker host access"
-    fi
-    
-    # Mount Podman socket if available
-    if [ -S /run/podman/podman.sock ]; then
-        log_info "Mounting Podman socket for host Podman access"
-        VOLUME_FLAGS="$VOLUME_FLAGS --volume /run/podman/podman.sock:/run/podman/podman.sock"
-    elif [ -S /run/user/$(id -u)/podman/podman.sock ]; then
-        log_info "Mounting user Podman socket for host Podman access"
-        VOLUME_FLAGS="$VOLUME_FLAGS --volume /run/user/$(id -u)/podman/podman.sock:/run/podman/podman.sock"
-    else
-        log_info "Podman socket not found, skipping Podman host access"
-    fi
-    
-    # Create distrobox container with all volumes
     if distrobox create -n "$CONTAINER_NAME" -i "$IMAGE_NAME" \
-        $VOLUME_FLAGS \
+        --volume /home/linuxbrew/.linuxbrew:/home/linuxbrew/.linuxbrew \
         --additional-flags "--hostname $CONTAINER_NAME" \
         --additional-flags "--userns=keep-id" \
         --additional-flags "--security-opt=label=disable" \
         --additional-flags "--device=/dev/dri" \
-        --additional-flags "--add-host=host.docker.internal:host-gateway" \
-        --additional-flags "--add-host=host.containers.internal:host-gateway" \
         --yes; then
         log_success "Distrobox container created successfully"
-        
-        # Configure hostnames inside container if not already set
-        log_info "Configuring host access hostnames..."
-        distrobox enter "$CONTAINER_NAME" -- bash -c '
-            # Get host IP from host-gateway (works with podman/docker)
-            HOST_IP=$(ip route | grep default | awk "{print \$3}" | head -n1)
-            
-            # Add hostname entries if they don't exist
-            if ! grep -q "host.docker.internal" /etc/hosts 2>/dev/null; then
-                echo "$HOST_IP host.docker.internal" | sudo tee -a /etc/hosts > /dev/null
-            fi
-            
-            if ! grep -q "host.containers.internal" /etc/hosts 2>/dev/null; then
-                echo "$HOST_IP host.containers.internal" | sudo tee -a /etc/hosts > /dev/null
-            fi
-        ' || log_warning "Could not configure hostnames (may require manual setup)"
-        
     else
         log_error "Failed to create distrobox container"
         exit 1
@@ -1018,10 +899,6 @@ while [[ $# -gt 0 ]]; do
             ;;
         --fix-browser)
             fix_browser_integration
-            exit 0
-            ;;
-        --test-containers)
-            test_container_runtime_access
             exit 0
             ;;
         LSP:*|lsp:*)
