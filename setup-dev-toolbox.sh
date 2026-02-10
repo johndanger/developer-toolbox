@@ -76,6 +76,7 @@ show_usage() {
     echo "  -v, --verbose  Verbose output"
     echo "  -d, --debug    Enable debug mode with detailed diagnostics"
     echo "  -i, --interactive Interactive IDE selection menu"
+    echo "  --mount-containers  Mount host Docker/Podman sockets (may interfere with export)"
     echo
     echo "Examples:"
     echo "  $0                                  # Interactive menu (if no IDEs specified)"
@@ -424,14 +425,100 @@ create_distrobox() {
     fi
 
     log_info "Creating new distrobox container"
-    if distrobox create -n "$CONTAINER_NAME" -i "$IMAGE_NAME" \
-        --volume /home/linuxbrew/.linuxbrew:/home/linuxbrew/.linuxbrew \
-        --additional-flags "--hostname $CONTAINER_NAME" \
-        --additional-flags "--userns=keep-id" \
-        --additional-flags "--security-opt=label=disable" \
-        --additional-flags "--device=/dev/dri" \
-        --yes; then
+    
+    # Start building the distrobox command
+    # Use array to properly handle arguments with spaces
+    DISTROBOX_ARGS=(
+        "create"
+        "-n" "$CONTAINER_NAME"
+        "-i" "$IMAGE_NAME"
+        "--volume" "/home/linuxbrew/.linuxbrew:/home/linuxbrew/.linuxbrew"
+    )
+    
+    # Add Docker/Podman socket mounts only if explicitly requested
+    # Note: Socket mounting may interfere with distrobox export, so it's opt-in
+    if [ -n "$MOUNT_CONTAINERS" ]; then
+        # Add Docker socket mount if available
+        if [ -e /var/run/docker.sock ]; then
+            log_info "Mounting Docker socket for host Docker access"
+            DISTROBOX_ARGS+=("--volume" "/var/run/docker.sock:/var/run/docker.sock")
+        fi
+        
+        # Add Podman socket mount if available
+        # Check multiple common locations for Podman socket
+        PODMAN_SOCKET=""
+        PODMAN_SOCKET_SOURCE=""
+        
+        # Check system-wide socket first
+        if [ -e /run/podman/podman.sock ]; then
+            # If it's a symlink, resolve it
+            if [ -L /run/podman/podman.sock ]; then
+                REAL_SOCKET=$(readlink -f /run/podman/podman.sock 2>/dev/null || readlink /run/podman/podman.sock 2>/dev/null)
+                if [ -n "$REAL_SOCKET" ] && [ -e "$REAL_SOCKET" ]; then
+                    PODMAN_SOCKET_SOURCE="$REAL_SOCKET"
+                    PODMAN_SOCKET="/run/podman/podman.sock"
+                else
+                    # Symlink exists but target doesn't, use the symlink itself
+                    PODMAN_SOCKET_SOURCE="/run/podman/podman.sock"
+                    PODMAN_SOCKET="/run/podman/podman.sock"
+                fi
+            else
+                # Regular file or socket
+                PODMAN_SOCKET_SOURCE="/run/podman/podman.sock"
+                PODMAN_SOCKET="/run/podman/podman.sock"
+            fi
+        fi
+        
+        # Check user-specific socket location if system-wide not found
+        if [ -z "$PODMAN_SOCKET" ] && [ -e /run/user/$(id -u)/podman/podman.sock ]; then
+            PODMAN_SOCKET_SOURCE="/run/user/$(id -u)/podman/podman.sock"
+            PODMAN_SOCKET="/run/podman/podman.sock"
+        fi
+        
+        # Mount Podman socket if found
+        if [ -n "$PODMAN_SOCKET" ] && [ -n "$PODMAN_SOCKET_SOURCE" ]; then
+            log_info "Mounting Podman socket for host Podman access: $PODMAN_SOCKET_SOURCE -> $PODMAN_SOCKET"
+            DISTROBOX_ARGS+=("--volume" "$PODMAN_SOCKET_SOURCE:$PODMAN_SOCKET")
+        else
+            log_info "Podman socket not found (checked /run/podman/podman.sock and /run/user/$(id -u)/podman/podman.sock)"
+        fi
+    else
+        log_info "Skipping Docker/Podman socket mounts (use --mount-containers to enable)"
+    fi
+    
+    # Add standard flags
+    DISTROBOX_ARGS+=(
+        "--additional-flags" "--hostname $CONTAINER_NAME"
+        "--additional-flags" "--userns=keep-id"
+        "--additional-flags" "--security-opt=label=disable"
+        "--additional-flags" "--device=/dev/dri"
+        "--yes"
+    )
+    
+    # Execute distrobox create
+    if distrobox "${DISTROBOX_ARGS[@]}"; then
         log_success "Distrobox container created successfully"
+        
+        # Configure hostname resolution only if container sockets are mounted
+        if [ -n "$MOUNT_CONTAINERS" ]; then
+            log_info "Configuring host access hostnames..."
+            distrobox enter "$CONTAINER_NAME" -- bash -c '
+                # Get host IP from gateway (fallback to common Docker gateway)
+                HOST_IP=$(ip route | grep default | awk "{print \$3}" | head -n1 2>/dev/null || echo "172.17.0.1")
+                
+                # Add hostname entries if they don't exist (non-destructive)
+                if [ -n "$HOST_IP" ] && [ "$HOST_IP" != "" ]; then
+                    if ! grep -q "host.docker.internal" /etc/hosts 2>/dev/null; then
+                        echo "$HOST_IP host.docker.internal" | sudo tee -a /etc/hosts > /dev/null 2>&1 || true
+                    fi
+                    
+                    if ! grep -q "host.containers.internal" /etc/hosts 2>/dev/null; then
+                        echo "$HOST_IP host.containers.internal" | sudo tee -a /etc/hosts > /dev/null 2>&1 || true
+                    fi
+                fi
+            ' 2>/dev/null || log_info "Hostname configuration skipped (optional feature)"
+        fi
+        
     else
         log_error "Failed to create distrobox container"
         exit 1
@@ -865,6 +952,7 @@ NO_EXPORT=""
 VERBOSE=""
 DEBUG=""
 INTERACTIVE=""
+MOUNT_CONTAINERS=""
 
 while [[ $# -gt 0 ]]; do
     case $1 in

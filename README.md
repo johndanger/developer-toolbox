@@ -369,6 +369,91 @@ If automatic opening fails, the system will display the URL and copy it to clipb
 **Debug information:**
 Check `/tmp/xdg-open-debug.log` inside the container for detailed information about URL opening attempts.
 
+### Docker/Podman Host Access (Optional)
+
+The developer toolbox can optionally configure access to the host's Docker and Podman daemons, allowing you to use the host's container runtime from inside the container.
+
+**⚠️ Important Note:** Mounting Docker/Podman sockets may interfere with `distrobox export`. If you need host container runtime access, either:
+1. Export applications first, then recreate the container with `--mount-containers`
+2. Or manually mount sockets after export is complete
+
+#### Enabling Host Access
+
+To enable host Docker/Podman access, use the `--mount-containers` flag:
+
+```bash
+# Create container with host Docker/Podman access
+./setup-dev-toolbox.sh --mount-containers zed
+
+# Or with multiple IDEs
+./setup-dev-toolbox.sh --mount-containers zed,cursor
+```
+
+#### How It Works
+
+When the container is created with `--mount-containers`, the setup script:
+1. **Mounts Docker socket** (`/var/run/docker.sock`) if available on the host
+2. **Mounts Podman socket** (`/run/podman/podman.sock` or user socket) if available on the host
+3. **Configures hostname resolution** for `host.docker.internal` and `host.containers.internal`
+4. **Sets up Podman** to automatically use the host socket when available
+
+#### Recommended Workflow
+
+If you need both export and host access:
+
+1. First, create and export without socket mounts (default):
+   ```bash
+   ./setup-dev-toolbox.sh zed
+   ```
+
+2. Then, if you need host Docker/Podman access, recreate with socket mounts:
+   ```bash
+   ./setup-dev-toolbox.sh --force --mount-containers zed
+   ```
+
+#### Using Host Docker/Podman
+
+Once sockets are mounted, you can use the host's container runtime:
+
+```bash
+# Enter the container
+distrobox enter devtoolbox
+
+# Use host Docker (if docker client is installed)
+docker ps
+docker run hello-world
+
+# Use host Podman (automatic)
+podman ps
+podman run quay.io/fedora/fedora:42 echo "Hello from host Podman"
+
+# Access host services via special hostnames
+curl http://host.docker.internal:8080
+curl http://host.containers.internal:8080
+```
+
+#### Testing Container Runtime Access
+
+To test if Docker/Podman host access is working:
+
+```bash
+# Test from setup script
+./setup-dev-toolbox.sh --test-containers
+
+# Or test manually from inside container
+distrobox enter devtoolbox -- bash -c '
+    echo "Testing Docker..."
+    docker ps 2>&1 || echo "Docker not available"
+    
+    echo "Testing Podman..."
+    podman ps 2>&1 || echo "Podman not available"
+    
+    echo "Testing hostname resolution..."
+    ping -c 1 host.docker.internal
+    ping -c 1 host.containers.internal
+'
+```
+
 ## Troubleshooting
 
 ### Container Already Exists
