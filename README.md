@@ -369,6 +369,109 @@ If automatic opening fails, the system will display the URL and copy it to clipb
 **Debug information:**
 Check `/tmp/xdg-open-debug.log` inside the container for detailed information about URL opening attempts.
 
+### Docker/Podman Host Access
+
+The developer toolbox automatically configures access to the host's Docker and Podman daemons, allowing you to use the host's container runtime from inside the container.
+
+#### How It Works
+
+When the container is created, the setup script automatically:
+1. **Mounts Docker socket** (`/var/run/docker.sock`) if available on the host
+2. **Mounts Podman socket** (`/run/podman/podman.sock` or user socket) if available on the host
+3. **Configures hostname resolution** for `host.docker.internal` and `host.containers.internal`
+4. **Sets up Podman** to automatically use the host socket when available
+
+#### Using Host Docker
+
+If Docker is installed on your host, you can use it from inside the container:
+
+```bash
+# Enter the container
+distrobox enter devtoolbox
+
+# Use host Docker (if docker client is installed)
+docker ps
+docker run hello-world
+
+# Or install docker client if needed
+dnf install docker
+```
+
+#### Using Host Podman
+
+Podman is automatically configured to use the host socket:
+
+```bash
+# Enter the container
+distrobox enter devtoolbox
+
+# Podman automatically uses host socket if mounted
+podman ps
+podman run quay.io/fedora/fedora:42 echo "Hello from host Podman"
+
+# Check which socket is being used
+echo $CONTAINER_HOST
+```
+
+#### Hostname Access
+
+The container includes special hostnames for accessing the host:
+
+- **`host.docker.internal`** - Resolves to the host machine (for Docker compatibility)
+- **`host.containers.internal`** - Resolves to the host machine (for Podman compatibility)
+
+These can be used to access services running on the host:
+
+```bash
+# Access a service running on host port 8080
+curl http://host.docker.internal:8080
+curl http://host.containers.internal:8080
+```
+
+#### Testing Container Runtime Access
+
+To test if Docker/Podman host access is working:
+
+```bash
+# Test from setup script
+./setup-dev-toolbox.sh --test-containers
+
+# Or test manually from inside container
+distrobox enter devtoolbox -- bash -c '
+    echo "Testing Docker..."
+    docker ps 2>&1 || echo "Docker not available"
+    
+    echo "Testing Podman..."
+    podman ps 2>&1 || echo "Podman not available"
+    
+    echo "Testing hostname resolution..."
+    ping -c 1 host.docker.internal
+    ping -c 1 host.containers.internal
+'
+```
+
+#### Troubleshooting
+
+**Docker/Podman commands fail:**
+- Ensure Docker or Podman is running on the host
+- Check that sockets are mounted: `ls -la /var/run/docker.sock /run/podman/podman.sock`
+- Verify socket permissions allow access
+
+**Hostname resolution fails:**
+- The hostnames are configured automatically, but if they don't work, you can manually add them to `/etc/hosts`:
+  ```bash
+  # Get host IP
+  HOST_IP=$(ip route | grep default | awk '{print $3}')
+  
+  # Add to /etc/hosts
+  echo "$HOST_IP host.docker.internal host.containers.internal" | sudo tee -a /etc/hosts
+  ```
+
+**Podman uses container's Podman instead of host:**
+- Podman inside the container will use the host socket automatically if mounted
+- Check `echo $CONTAINER_HOST` to see which socket is configured
+- The container's Podman installation is still available for container-in-container scenarios if needed
+
 ## Troubleshooting
 
 ### Container Already Exists

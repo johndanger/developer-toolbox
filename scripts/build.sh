@@ -14,7 +14,56 @@ install_common_tools() {
         gnupg2 \
         dnf-plugins-core \
         kitty-terminfo \
-        xdg-utils
+        xdg-utils \
+        podman \
+        just
+    
+    # Configure Podman to use host socket if available
+    setup_podman_host_access
+}
+
+# Configure Podman to use host socket when available
+setup_podman_host_access() {
+    echo "Configuring Podman for host access..."
+    
+    # Create a wrapper script that detects and uses host Podman socket
+    cat > /usr/local/bin/podman-host-wrapper << 'PODMANEOF'
+#!/bin/bash
+# Wrapper for podman that automatically uses host socket if available
+
+# Check for host Podman socket (mounted at runtime)
+if [ -S /run/podman/podman.sock ]; then
+    export CONTAINER_HOST="unix:///run/podman/podman.sock"
+elif [ -S /run/user/$(id -u)/podman/podman.sock ]; then
+    export CONTAINER_HOST="unix:///run/user/$(id -u)/podman/podman.sock"
+fi
+
+# Execute podman with the configured host
+exec /usr/bin/podman "$@"
+PODMANEOF
+    
+    chmod +x /usr/local/bin/podman-host-wrapper
+    
+    # Create alias configuration for shells
+    cat > /etc/profile.d/podman-host.sh << 'PROFEOF'
+#!/bin/bash
+# Configure Podman to use host socket if available
+
+# Check for host Podman socket
+if [ -S /run/podman/podman.sock ]; then
+    export CONTAINER_HOST="unix:///run/podman/podman.sock"
+elif [ -S /run/user/$(id -u)/podman/podman.sock ]; then
+    export CONTAINER_HOST="unix:///run/user/$(id -u)/podman/podman.sock"
+fi
+
+# Alias podman to use host socket (optional, can be enabled if needed)
+# alias podman='CONTAINER_HOST="${CONTAINER_HOST:-unix:///run/podman/podman.sock}" /usr/bin/podman'
+PROFEOF
+    
+    chmod +x /etc/profile.d/podman-host.sh
+    
+    echo "Podman host access configuration complete."
+    echo "Podman will automatically use host socket if mounted at runtime."
 }
 
 # Create browser integration for distrobox
