@@ -506,7 +506,7 @@ create_distrobox() {
                 # Get host IP from gateway (fallback to common Docker gateway)
                 HOST_IP=$(ip route | grep default | awk "{print \$3}" | head -n1 2>/dev/null || echo "172.17.0.1")
                 
-                # Add hostname entries if they don't exist (non-destructive)
+                # Add hostname entries if they don't exist - non-destructive
                 if [ -n "$HOST_IP" ] && [ "$HOST_IP" != "" ]; then
                     if ! grep -q "host.docker.internal" /etc/hosts 2>/dev/null; then
                         echo "$HOST_IP host.docker.internal" | sudo tee -a /etc/hosts > /dev/null 2>&1 || true
